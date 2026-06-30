@@ -311,6 +311,7 @@ prompt_new_tab_name = true
 pane_borders = true
 pane_gaps = true
 show_agent_labels_on_pane_borders = false
+hide_tab_bar_when_single_tab = false
 agent_panel_sort = "spaces"
 accent = "cyan"
 ```
@@ -336,6 +337,8 @@ Set `mouse_scroll_lines` to change how many pane scrollback lines each mouse whe
 Set `pane_borders = false` to remove split pane borders. Set `pane_gaps = false` to make split panes share compact divider borders. With borders disabled, pane gaps use one blank terminal cell between panes. Terminal cells are usually taller than they are wide, so a one-row gap between top/bottom panes can look larger than a one-column gap between left/right panes.
 
 Set `show_agent_labels_on_pane_borders = true` if you want detected agent labels in split pane borders when no manual pane label is set.
+
+Set `hide_tab_bar_when_single_tab = true` to hide the tab row when the active workspace has exactly one tab. New tabs can still be created with the configured keybinding. When a second tab appears, Herdr restores the tab row and resizes panes to make room for it.
 
 ## Notifications
 
