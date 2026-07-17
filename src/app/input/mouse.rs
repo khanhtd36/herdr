@@ -26,6 +26,7 @@ use super::{
 };
 
 pub(super) enum MouseAction {
+    NewWorkspace,
     Settings(SettingsAction),
     FocusWorkspace {
         ws_idx: usize,
@@ -535,8 +536,7 @@ impl AppState {
                         && mouse.column >= new_button.x
                         && mouse.column < new_button.x + new_button.width;
                     if on_new_button {
-                        self.request_new_workspace = true;
-                        return None;
+                        return Some(MouseAction::NewWorkspace);
                     }
 
                     if let Some(target) =
@@ -1152,7 +1152,7 @@ impl AppState {
 
         match crate::ui::mobile_switcher_target_at(self, mouse.column, mouse.row) {
             Some(crate::ui::MobileSwitcherTarget::NewWorkspace) => {
-                self.request_new_workspace = true;
+                return MobileMouseResult::Action(MouseAction::NewWorkspace);
             }
             Some(crate::ui::MobileSwitcherTarget::Workspace(ws_idx)) => {
                 self.mode = Mode::Terminal;
@@ -3628,7 +3628,82 @@ mod tests {
     }
 
     #[test]
-    fn mobile_switcher_action_rows_create_workspace_and_open_tab_dialog() {
+    fn mobile_switcher_new_workspace_opens_prompt_when_enabled() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("one")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.prompt_new_workspace_name = true;
+
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 20));
+        let switch = app.state.view.mobile_menu_hit_area;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            switch.x + 1,
+            switch.y + 1,
+        ));
+        let viewport = crate::ui::mobile_switcher_areas(&app.state).viewport;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            viewport.x + 2,
+            viewport.y + 1,
+        ));
+
+        assert_eq!(app.state.mode, Mode::RenameWorkspace);
+        assert!(app.state.pending_workspace_create_cwd.is_some());
+        assert!(app.state.name_input_replace_on_type);
+        assert_eq!(app.state.workspaces.len(), 1);
+    }
+
+    #[test]
+    fn desktop_new_workspace_opens_prompt_when_enabled() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("one")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.prompt_new_workspace_name = true;
+
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 120, 40));
+        let new_workspace = app.state.sidebar_new_button_rect();
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            new_workspace.x + 1,
+            new_workspace.y,
+        ));
+
+        assert_eq!(app.state.mode, Mode::RenameWorkspace);
+        assert!(app.state.pending_workspace_create_cwd.is_some());
+        assert!(app.state.name_input_replace_on_type);
+        assert_eq!(app.state.workspaces.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn desktop_new_workspace_creates_immediately_by_default() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("one")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 120, 40));
+        let new_workspace = app.state.sidebar_new_button_rect();
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            new_workspace.x + 1,
+            new_workspace.y,
+        ));
+
+        assert_eq!(app.state.workspaces.len(), 2);
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.pending_workspace_create_cwd.is_none());
+        crate::app::api::test_support::shutdown_test_runtimes(&mut app);
+    }
+
+    #[test]
+    fn mobile_switcher_new_tab_opens_dialog_when_enabled() {
         let mut app = app_for_mouse_test();
         let mut ws = Workspace::test_new("one");
         ws.test_add_tab(Some("logs"));
@@ -3645,21 +3720,12 @@ mod tests {
             switch.y + 1,
         ));
         let viewport = crate::ui::mobile_switcher_areas(&app.state).viewport;
-
-        app.handle_mouse(mouse(
-            MouseEventKind::Down(MouseButton::Left),
-            viewport.x + 2,
-            viewport.y + 1,
-        ));
-        assert!(app.state.request_new_workspace);
-
-        app.state.request_new_workspace = false;
-        app.state.mode = Mode::Navigate;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
             viewport.y + 5,
         ));
+
         assert_eq!(app.state.mode, Mode::RenameTab);
         assert!(app.state.creating_new_tab);
     }

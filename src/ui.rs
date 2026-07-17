@@ -624,6 +624,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn workspace_creation_dialog_renders_new_workspace_title() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.mode = Mode::RenameWorkspace;
+        app.pending_workspace_create_cwd = Some("/tmp/project".into());
+        app.name_input = "project".into();
+
+        let area = Rect::new(0, 0, 80, 20);
+        compute_view(&mut app, area);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(&app, frame)).unwrap();
+        let screen = (0..area.height)
+            .map(|row| buffer_row_text(terminal.backend().buffer(), area, row))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(screen.contains("new workspace"), "{screen}");
+        assert!(screen.contains("project"), "{screen}");
+    }
+
     #[tokio::test]
     async fn focused_pane_cursor_wins_during_terminal_render() {
         let mut app = crate::app::state::AppState::test_new();
