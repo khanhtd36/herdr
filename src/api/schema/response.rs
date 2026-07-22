@@ -103,10 +103,16 @@ pub enum ResponseResult {
     },
     AgentPrompted {
         agent: AgentInfo,
-        baseline_state_change_seq: u64,
     },
     AgentList {
         agents: Vec<AgentInfo>,
+    },
+    AgentView {
+        active: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
     },
     PaneInfo {
         pane: PaneInfo,

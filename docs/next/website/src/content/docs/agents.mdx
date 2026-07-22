@@ -5,6 +5,8 @@ description: See what Herdr can detect, how agent state works, and how integrati
 
 Herdr is built for running more than one coding agent at a time. Each agent stays in a real terminal pane with its shell, logs, prompts, and running processes intact. Herdr tracks which panes contain agents, rolls their state up to tabs and workspaces, and lets you jump straight to the pane that needs attention instead of polling every terminal by hand.
 
+To coordinate agents from scripts or from another agent, see [Agent automation](/docs/agent-automation/).
+
 ## Supported agents
 
 Automatic detection works out of the box for common coding agents. The important difference is not whether Herdr can see an agent. It is which signal is allowed to author `idle`, `working`, and `blocked`.
@@ -116,7 +118,7 @@ herdr agent rename w1:p1 reviewer
 herdr agent rename reviewer --clear
 ```
 
-Targets accept terminal IDs, unique agent names, detected or reported agent labels, and legacy pane IDs.
+Targets accept a unique live agent name or the pane ID that currently hosts the agent. Terminal IDs and bare agent-kind labels are not accepted.
 
 ## Custom status labels
 
@@ -136,38 +138,6 @@ herdr pane report-metadata w1:p1 \
 `state` controls waits, notifications, and rollups. The `summary` token is display-only and can be used as `$summary` in an Agent sidebar row.
 
 Agent sidebar rows can also opt into `terminal_title` or `terminal_title_stripped`; neither appears in the default rows. The first shows the latest safety-normalized OSC 0/2 terminal title. The second removes one recognized leading activity or spinner glyph and following whitespace. Herdr owns these values on the server; they are ephemeral across a cold restart and remain independent of metadata titles and semantic agent state. Spinner animation can therefore update the raw title without producing a pane update when the stripped text stays the same.
-
-## Start agents from the CLI
-
-Use workspace, tab, pane, and layout commands to create topology first. Then activate an existing shell pane as a supported interactive agent with a unique name:
-
-```bash
-herdr pane split --current --direction right --no-focus
-herdr agent start reviewer --kind pi --pane w1:p2
-```
-
-`agent start` never creates or splits topology. Herdr chooses the canonical executable for the requested kind, labels the target pane with the unique name, and returns after the expected interactive agent is detected as idle, done, or blocked. Optional native arguments follow `--`:
-
-```bash
-herdr agent start reviewer --kind pi --pane w1:p2 -- --name scratch --no-session
-```
-
-Submit a prompt by name. `--wait` binds the wait to that prompt and returns when the agent finishes or becomes blocked:
-
-```bash
-herdr agent prompt reviewer "Review the current diff" --wait --timeout 120000
-```
-
-`agent prompt` honors the terminal's live bracketed-paste mode before sending Enter, so text such as `A != B` reaches agents without triggering input-mode keybindings. Use it for submissions; `agent send` remains a low-level literal-text operation and does not submit a turn.
-
-For an agent that is already working, `agent wait` returns when its status becomes idle, done, or blocked. It returns immediately if one of those statuses is already current.
-
-```bash
-herdr agent wait reviewer --timeout 120000
-herdr agent read reviewer --source recent-unwrapped --lines 120
-```
-
-Use `herdr pane ...` commands for ordinary terminals, servers, tests, shells, topology, and low-level terminal input.
 
 ## Attach directly to an agent
 

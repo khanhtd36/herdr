@@ -116,16 +116,23 @@ fn kimi_config_hooks(config: &str) -> Vec<toml::Value> {
         .unwrap_or_default()
 }
 
-fn assert_kimi_hook(config: &str, hook_path: &Path, event: &str, action: &str) {
+fn assert_kimi_hook(
+    config: &str,
+    hook_path: &Path,
+    event: &str,
+    matcher: Option<&str>,
+    action: &str,
+) {
     let command = kimi_hook_command(hook_path, action);
     let hooks = kimi_config_hooks(config);
     assert!(
         hooks.iter().any(|hook| {
             hook.get("event").and_then(toml::Value::as_str) == Some(event)
+                && hook.get("matcher").and_then(toml::Value::as_str) == matcher
                 && hook.get("command").and_then(toml::Value::as_str) == Some(command.as_str())
                 && hook.get("timeout").and_then(toml::Value::as_integer) == Some(10)
         }),
-        "missing kimi hook for {event} -> {action}"
+        "missing kimi hook for {event} ({matcher:?}) -> {action}"
     );
 }
 
@@ -1434,12 +1441,32 @@ fn install_kimi_writes_hook_and_updates_config() {
     assert!(config.contains("command = \"echo keep\""));
     assert!(config.contains(KIMI_CONFIG_BLOCK_BEGIN));
     assert!(config.contains(KIMI_CONFIG_BLOCK_END));
-    for (event, action) in KIMI_HOOK_EVENTS {
-        assert_kimi_hook(&config, &installed.hook_path, event, action);
+    for (event, matcher, action) in KIMI_HOOK_EVENTS {
+        assert_kimi_hook(&config, &installed.hook_path, event, matcher, action);
     }
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn kimi_question_hooks_report_blocked_until_the_question_finishes() {
+    assert!(KIMI_HOOK_EVENTS.contains(&(
+        "PreToolUse",
+        Some(KIMI_ASK_USER_QUESTION_MATCHER),
+        "blocked",
+    )));
+    assert!(KIMI_HOOK_EVENTS.contains(&(
+        "PostToolUse",
+        Some(KIMI_ASK_USER_QUESTION_MATCHER),
+        "working",
+    )));
+    assert!(KIMI_HOOK_EVENTS.contains(&(
+        "PostToolUseFailure",
+        Some(KIMI_ASK_USER_QUESTION_MATCHER),
+        "working",
+    )));
+    assert!(KIMI_HOOK_EVENTS.contains(&("PreToolUse", Some(KIMI_OTHER_TOOL_MATCHER), "working",)));
 }
 
 #[test]
@@ -2613,7 +2640,7 @@ fn bundled_integration_assets_report_session_refs() {
     assert!(PI_EXTENSION_ASSET.contains("pane.report_agent_session"));
     assert!(PI_EXTENSION_ASSET.contains("pane.report_agent\""));
     assert!(PI_EXTENSION_ASSET.contains("pi.on(\"agent_start\""));
-    assert!(PI_EXTENSION_ASSET.contains("pi.on(\"agent_end\""));
+    assert!(PI_EXTENSION_ASSET.contains("pi.on(\"agent_settled\""));
     assert!(PI_EXTENSION_ASSET.contains("pane.release_agent"));
     assert!(PI_EXTENSION_ASSET.contains("pi.on(\"session_shutdown\""));
     assert!(OMP_EXTENSION_ASSET.contains("agent_session_path"));

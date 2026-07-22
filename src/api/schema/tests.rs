@@ -86,6 +86,7 @@ fn agent_start_and_prompt_requests_round_trip() {
         method: Method::AgentPrompt(AgentPromptParams {
             target: "reviewer".into(),
             text: "review this".into(),
+            wait: None,
         }),
     };
     let prompt_json = serde_json::to_value(&prompt).unwrap();
@@ -93,6 +94,31 @@ fn agent_start_and_prompt_requests_round_trip() {
     assert_eq!(
         serde_json::from_value::<Request>(prompt_json).unwrap(),
         prompt
+    );
+
+    let prompt_and_wait = Request {
+        id: "prompt-and-wait".into(),
+        method: Method::AgentPrompt(AgentPromptParams {
+            target: "reviewer".into(),
+            text: "review this".into(),
+            wait: Some(AgentPromptWaitOptions {
+                until: vec![AgentStatus::Idle, AgentStatus::Done],
+                timeout_ms: Some(120_000),
+            }),
+        }),
+    };
+    let prompt_and_wait_json = serde_json::to_value(&prompt_and_wait).unwrap();
+    assert_eq!(
+        prompt_and_wait_json["params"]["wait"]["until"],
+        serde_json::json!(["idle", "done"])
+    );
+    assert_eq!(
+        prompt_and_wait_json["params"]["wait"]["timeout_ms"],
+        120_000
+    );
+    assert_eq!(
+        serde_json::from_value::<Request>(prompt_and_wait_json).unwrap(),
+        prompt_and_wait
     );
 }
 
@@ -267,6 +293,49 @@ fn client_window_title_requests_round_trip() {
     assert_eq!(json["method"], "client.window_title.clear");
     let restored: Request = serde_json::from_value(json).unwrap();
     assert_eq!(restored, clear);
+}
+
+#[test]
+fn agent_view_requests_round_trip() {
+    let set_json = serde_json::json!({
+        "id": "view-set",
+        "method": "agent.view.set",
+        "params": {
+            "source": "example.views",
+            "label": "current + attention",
+            "filter": {
+                "op": "any",
+                "filters": [
+                    {
+                        "op": "eq",
+                        "field": "workspace_id",
+                        "value": {"context": "current_workspace_id"}
+                    },
+                    {
+                        "op": "in",
+                        "field": "status",
+                        "values": ["blocked", "done"]
+                    }
+                ]
+            },
+            "sort": [
+                {"field": "attention", "order": "desc"},
+                {"field": "state_change_seq", "order": "desc"}
+            ]
+        }
+    });
+    let request: Request = serde_json::from_value(set_json.clone()).unwrap();
+    assert!(matches!(request.method, Method::AgentViewSet(_)));
+    assert_eq!(serde_json::to_value(request).unwrap(), set_json);
+
+    let clear_json = serde_json::json!({
+        "id": "view-clear",
+        "method": "agent.view.clear",
+        "params": {"source": "example.views"}
+    });
+    let request: Request = serde_json::from_value(clear_json.clone()).unwrap();
+    assert!(matches!(request.method, Method::AgentViewClear(_)));
+    assert_eq!(serde_json::to_value(request).unwrap(), clear_json);
 }
 
 #[test]
@@ -830,6 +899,7 @@ fn plugin_link_list_unlink_round_trip() {
             platforms: None,
             command: vec!["bun".into(), "install".into()],
         }],
+        startup: vec![],
         actions: vec![PluginManifestAction {
             id: "bootstrap".into(),
             title: "Bootstrap worktree".into(),

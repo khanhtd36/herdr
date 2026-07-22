@@ -1212,6 +1212,94 @@ fn live_handoff_accepts_canonical_pane_id_from_child_env() {
 }
 
 #[test]
+fn live_handoff_keeps_unmanaged_agent_name_bound_to_saved_session() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let api_socket = runtime_dir.join("herdr.sock");
+    let old_session = base.join("old-session.jsonl");
+    let new_session = base.join("new-session.jsonl");
+
+    let spawned = spawn_server(&config_home, &runtime_dir, &api_socket);
+    wait_for_socket(&api_socket, Duration::from_secs(10));
+    register_runtime_dir(&runtime_dir);
+    let created = request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:workspace:create",
+            "method": "workspace.create",
+            "params": {"cwd": "/tmp", "focus": true}
+        }),
+    );
+    let pane_id = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:agent:report",
+            "method": "pane.report_agent",
+            "params": {
+                "pane_id": pane_id,
+                "source": "herdr:pi",
+                "agent": "pi",
+                "state": "idle",
+                "seq": 1,
+                "agent_session_path": old_session
+            }
+        }),
+    ));
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:agent:rename",
+            "method": "agent.rename",
+            "params": {"target": pane_id, "name": "reviewer"}
+        }),
+    ));
+
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({"id":"test:handoff","method":"server.live_handoff","params":{}}),
+    ));
+    drop(spawned);
+    wait_for_api(&api_socket, Duration::from_secs(10));
+
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:agent:new-session",
+            "method": "pane.report_agent_session",
+            "params": {
+                "pane_id": pane_id,
+                "source": "herdr:pi",
+                "agent": "pi",
+                "seq": 2,
+                "agent_session_path": new_session,
+                "session_start_source": "new"
+            }
+        }),
+    ));
+    let old_name = request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:agent:get-old-name",
+            "method": "agent.get",
+            "params": {"target": "reviewer"}
+        }),
+    );
+    assert_eq!(old_name["error"]["code"], "agent_not_found", "{old_name}");
+
+    let _ = request(
+        &api_socket,
+        serde_json::json!({"id":"test:stop","method":"server.stop","params":{}}),
+    );
+    cleanup_test_base(&base);
+}
+
+#[test]
 fn live_handoff_keeps_agent_started_pane_after_agent_exits() {
     use std::os::unix::fs::PermissionsExt;
 

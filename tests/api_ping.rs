@@ -509,6 +509,21 @@ fn workspace_list_and_create_round_trip() {
     let recent_text = recent["result"]["read"]["text"].as_str().unwrap();
     assert!(recent_text.contains("beta") || recent_text.contains("gamma"));
 
+    for source in ["visible", "detection"] {
+        let limited = send_request(
+            &socket_path,
+            &format!(
+                r#"{{"id":"req_11_{source}","method":"pane.read","params":{{"pane_id":"{}","source":"{source}","lines":2}}}}"#,
+                pane_id
+            ),
+        );
+        let text = limited["result"]["read"]["text"].as_str().unwrap();
+        assert!(
+            text.lines().count() <= 2,
+            "{source} ignored its two-line limit: {text:?}"
+        );
+    }
+
     let waited = send_request(
         &socket_path,
         &format!(
@@ -1176,29 +1191,32 @@ fn agent_methods_round_trip_over_socket() {
     assert_eq!(agents[0]["agent_status"], "working");
     assert_eq!(agents[0]["pane_id"], pane_id);
 
-    let fetched_by_detected_agent = send_request(
+    let fetched_by_pane = send_request(
         &socket_path,
-        r#"{"id":"agent_get_detected","method":"agent.get","params":{"target":"pi"}}"#,
+        &format!(
+            r#"{{"id":"agent_get_pane","method":"agent.get","params":{{"target":"{}"}}}}"#,
+            pane_id
+        ),
     );
     assert_eq!(
-        fetched_by_detected_agent["result"]["agent"]["terminal_id"],
+        fetched_by_pane["result"]["agent"]["terminal_id"],
         terminal_id
     );
 
     let renamed_first_agent = send_request(
         &socket_path,
-        r#"{"id":"agent_rename_first","method":"agent.rename","params":{"target":"pi","name":"worker"}}"#,
+        &format!(
+            r#"{{"id":"agent_rename_first","method":"agent.rename","params":{{"target":"{}","name":"worker"}}}}"#,
+            pane_id
+        ),
     );
     assert_eq!(renamed_first_agent["result"]["agent"]["name"], "worker");
 
-    let fetched_by_terminal = send_request(
+    let fetched_by_name = send_request(
         &socket_path,
-        &format!(
-            r#"{{"id":"agent_get_terminal","method":"agent.get","params":{{"target":"{}"}}}}"#,
-            terminal_id
-        ),
+        r#"{"id":"agent_get_name","method":"agent.get","params":{"target":"worker"}}"#,
     );
-    assert_eq!(fetched_by_terminal["result"]["agent"]["name"], "worker");
+    assert_eq!(fetched_by_name["result"]["agent"]["name"], "worker");
 
     let read = send_request(
         &socket_path,
@@ -1209,12 +1227,9 @@ fn agent_methods_round_trip_over_socket() {
 
     let sent = send_request(
         &socket_path,
-        &format!(
-            r#"{{"id":"agent_send","method":"agent.send","params":{{"target":"{}","text":"echo agent-send-ok\n"}}}}"#,
-            terminal_id
-        ),
+        r#"{"id":"agent_send_keys","method":"agent.send_keys","params":{"target":"worker","keys":["enter"]}}"#,
     );
-    assert_eq!(sent["result"]["type"], "ok");
+    assert_eq!(sent["error"]["code"], "agent_not_ready");
 
     let tab_created = send_request(
         &socket_path,
@@ -1244,7 +1259,7 @@ fn agent_methods_round_trip_over_socket() {
         &socket_path,
         &format!(
             r#"{{"id":"agent_second_rename","method":"agent.rename","params":{{"target":"{}","name":"reviewer"}}}}"#,
-            second_terminal_id
+            second_pane_id
         ),
     );
     assert_eq!(second_renamed["result"]["agent"]["name"], "reviewer");
@@ -1785,7 +1800,10 @@ fn pane_report_agent_updates_effective_state() {
 
     let agent = send_request(
         &socket_path,
-        r#"{"id":"req_hook_metadata_agent","method":"agent.get","params":{"target":"pi"}}"#,
+        &format!(
+            r#"{{"id":"req_hook_metadata_agent","method":"agent.get","params":{{"target":"{}"}}}}"#,
+            pane_id
+        ),
     );
     assert_eq!(agent["result"]["agent"]["agent"], "pi");
     assert_eq!(

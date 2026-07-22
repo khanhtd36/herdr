@@ -58,20 +58,37 @@ const KIMI_HOOK_ASSET: &str = if cfg!(windows) {
 } else {
     include_str!("assets/kimi/herdr-agent-state.sh")
 };
-const KIMI_INTEGRATION_VERSION: u32 = 4;
+const KIMI_INTEGRATION_VERSION: u32 = 5;
 const KIMI_CONFIG_BLOCK_BEGIN: &str = "# >>> herdr kimi integration";
 const KIMI_CONFIG_BLOCK_END: &str = "# <<< herdr kimi integration";
 const KIMI_MIN_VERSION: &str = "0.14.0";
-const KIMI_HOOK_EVENTS: [(&str, &str); 9] = [
-    ("SessionStart", "session"),
-    ("UserPromptSubmit", "working"),
-    ("PreToolUse", "working"),
-    ("SubagentStart", "working"),
-    ("PreCompact", "working"),
-    ("PermissionRequest", "blocked"),
-    ("PermissionResult", "working"),
-    ("Stop", "idle"),
-    ("Interrupt", "idle"),
+const KIMI_ASK_USER_QUESTION_MATCHER: &str = "^AskUserQuestion$";
+const KIMI_OTHER_TOOL_MATCHER: &str = "^(?!AskUserQuestion$).*$";
+const KIMI_HOOK_EVENTS: [(&str, Option<&str>, &str); 12] = [
+    ("SessionStart", None, "session"),
+    ("UserPromptSubmit", None, "working"),
+    ("PreToolUse", Some(KIMI_OTHER_TOOL_MATCHER), "working"),
+    (
+        "PreToolUse",
+        Some(KIMI_ASK_USER_QUESTION_MATCHER),
+        "blocked",
+    ),
+    (
+        "PostToolUse",
+        Some(KIMI_ASK_USER_QUESTION_MATCHER),
+        "working",
+    ),
+    (
+        "PostToolUseFailure",
+        Some(KIMI_ASK_USER_QUESTION_MATCHER),
+        "working",
+    ),
+    ("SubagentStart", None, "working"),
+    ("PreCompact", None, "working"),
+    ("PermissionRequest", None, "blocked"),
+    ("PermissionResult", None, "working"),
+    ("Stop", None, "idle"),
+    ("Interrupt", None, "idle"),
 ];
 const COPILOT_HOOK_INSTALL_NAME: &str = if cfg!(windows) {
     "herdr-agent-state.ps1"

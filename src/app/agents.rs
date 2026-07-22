@@ -8,6 +8,14 @@ use crate::api::schema::AgentStartParams;
 const DEFAULT_AGENT_START_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_AGENT_START_TIMEOUT: Duration = Duration::from_secs(300);
 const AGENT_START_SETTLE_DELAY: Duration = Duration::from_secs(3);
+const INVALID_AGENT_NAME_MESSAGE: &str = "agent name must start with a lowercase letter and contain only lowercase letters, digits, '-' or '_' (1-32 characters)";
+
+fn valid_agent_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some('a'..='z'))
+        && name.len() <= 32
+        && chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '-' | '_'))
+}
 
 impl App {
     pub(super) fn collect_agent_infos(&self) -> Vec<crate::api::schema::AgentInfo> {
@@ -27,7 +35,7 @@ impl App {
     }
 
     pub(super) fn reconcile_managed_agent_target(&mut self, target: &str) {
-        let Ok(resolved) = self.resolve_terminal_target(target) else {
+        let Ok(resolved) = self.resolve_agent_target(target) else {
             return;
         };
         let Some(terminal_id) = self
@@ -55,7 +63,7 @@ impl App {
         &self,
         target: &str,
     ) -> Result<crate::api::schema::AgentInfo, TerminalTargetError> {
-        let resolved = self.resolve_terminal_target(target)?;
+        let resolved = self.resolve_agent_target(target)?;
         self.agent_info(resolved.ws_idx, resolved.pane_id)
             .ok_or_else(|| TerminalTargetError::NotFound {
                 target: target.to_string(),
@@ -66,7 +74,7 @@ impl App {
         &mut self,
         target: &str,
     ) -> Result<crate::api::schema::AgentInfo, TerminalTargetError> {
-        let resolved = self.resolve_terminal_target(target)?;
+        let resolved = self.resolve_agent_target(target)?;
         self.state
             .focus_pane_in_workspace(resolved.ws_idx, resolved.pane_id);
         self.state.mark_active_tab_seen();
@@ -83,12 +91,13 @@ impl App {
         name: Option<String>,
     ) -> Result<crate::api::schema::AgentInfo, AgentRenameError> {
         let resolved = self
-            .resolve_terminal_target(target)
+            .resolve_agent_target(target)
             .map_err(AgentRenameError::Target)?;
-        let normalized_name = name.and_then(|name| {
-            let trimmed = name.trim().to_string();
-            (!trimmed.is_empty()).then_some(trimmed)
-        });
+        let normalized_name = match name {
+            Some(name) if valid_agent_name(&name) => Some(name),
+            Some(_) => return Err(AgentRenameError::InvalidName),
+            None => None,
+        };
 
         if let Some(name) = normalized_name.as_deref() {
             let conflicts = self.agent_name_conflicts(name, &resolved.terminal_id);
@@ -113,14 +122,16 @@ impl App {
         if terminal.managed_agent_launch_pending() {
             return Err(AgentRenameError::PendingLaunch);
         }
+        if terminal.effective_agent_label().is_none() {
+            return Err(AgentRenameError::NotAgent);
+        }
         match normalized_name {
-            Some(name) => {
-                terminal.set_agent_name(name.clone());
-                terminal.set_manual_label(name);
-            }
+            Some(name) => terminal.set_agent_name(name),
             None => terminal.clear_agent_name(),
         }
         self.state.mark_session_dirty();
+        self.schedule_session_save();
+        self.emit_pane_updated(resolved.ws_idx, resolved.pane_id);
         self.agent_info(resolved.ws_idx, resolved.pane_id)
             .ok_or_else(|| {
                 AgentRenameError::Target(TerminalTargetError::NotFound {
@@ -133,8 +144,8 @@ impl App {
         &mut self,
         params: AgentStartParams,
     ) -> Result<(crate::api::schema::AgentInfo, Vec<String>), AgentStartError> {
-        let name = params.name.trim().to_string();
-        if name.is_empty() {
+        let name = params.name;
+        if !valid_agent_name(&name) {
             return Err(AgentStartError::InvalidName);
         }
         let Some(kind) = crate::detect::parse_agent_label(&params.kind) else {
@@ -154,7 +165,7 @@ impl App {
                 candidates: conflicts,
             });
         }
-        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+        let Some((ws_idx, pane_id)) = self.parse_current_public_pane_id(&params.pane_id) else {
             return Err(AgentStartError::TargetNotFound(params.pane_id));
         };
         let terminal_id = self
@@ -193,7 +204,6 @@ impl App {
             return Err(AgentStartError::InvalidTimeout);
         }
 
-        let previous_label = terminal.manual_label.clone();
         let now = Instant::now();
         let terminal = self
             .state
@@ -201,13 +211,8 @@ impl App {
             .get_mut(&terminal_id)
             .ok_or_else(|| AgentStartError::TargetUnavailable(params.pane_id.clone()))?;
         terminal.begin_managed_agent(name.clone(), kind, now, AGENT_START_SETTLE_DELAY, timeout);
-        terminal.set_manual_label(name);
         if let Err(err) = runtime.try_send_bytes(Bytes::from(bytes)) {
             terminal.clear_agent_name();
-            match previous_label {
-                Some(label) => terminal.set_manual_label(label),
-                None => terminal.clear_manual_label(),
-            }
             return Err(AgentStartError::InputFailed(err.to_string()));
         }
         self.state.mark_session_dirty();
@@ -226,7 +231,7 @@ impl App {
         match err {
             AgentStartError::InvalidName => crate::api::schema::ErrorBody {
                 code: "invalid_agent_name".into(),
-                message: "agent name must not be empty".into(),
+                message: INVALID_AGENT_NAME_MESSAGE.into(),
             },
             AgentStartError::UnsupportedKind(kind) => crate::api::schema::ErrorBody {
                 code: "unsupported_agent_kind".into(),
@@ -318,6 +323,14 @@ impl App {
     ) -> crate::api::schema::ErrorBody {
         match err {
             AgentRenameError::Target(err) => self.agent_target_error_body(err),
+            AgentRenameError::InvalidName => crate::api::schema::ErrorBody {
+                code: "invalid_agent_name".into(),
+                message: INVALID_AGENT_NAME_MESSAGE.into(),
+            },
+            AgentRenameError::NotAgent => crate::api::schema::ErrorBody {
+                code: "agent_not_found".into(),
+                message: "agent target does not currently host an agent".into(),
+            },
             AgentRenameError::PendingLaunch => crate::api::schema::ErrorBody {
                 code: "agent_launch_pending".into(),
                 message: "agent name cannot change while startup is pending".into(),
@@ -443,9 +456,35 @@ pub(super) enum AgentStartError {
 
 pub(super) enum AgentRenameError {
     Target(TerminalTargetError),
+    InvalidName,
+    NotAgent,
     PendingLaunch,
     DuplicateName {
         name: String,
         candidates: Vec<crate::api::schema::AgentInfo>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_agent_name;
+
+    #[test]
+    fn agent_names_use_a_small_cli_safe_grammar() {
+        for name in ["a", "reviewer-one", "reviewer_2", &"a".repeat(32)] {
+            assert!(valid_agent_name(name), "expected {name:?} to be valid");
+        }
+        for name in [
+            "",
+            " reviewer",
+            "reviewer ",
+            "reviewer one",
+            "Reviewer",
+            "1reviewer",
+            "reviewer.one",
+            &"a".repeat(33),
+        ] {
+            assert!(!valid_agent_name(name), "expected {name:?} to be invalid");
+        }
+    }
 }

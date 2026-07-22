@@ -173,7 +173,7 @@ pub(crate) fn handle_navigator_key(
             KeyCode::Backspace => {
                 state.navigator.state_filter = None;
                 state.navigator.query.pop();
-                state.clamp_navigator_selection_from(terminal_runtimes);
+                state.select_first_navigator_match_from(terminal_runtimes);
             }
             KeyCode::Up => state.move_navigator_selection_from(terminal_runtimes, -1),
             KeyCode::Down => state.move_navigator_selection_from(terminal_runtimes, 1),
@@ -222,22 +222,22 @@ pub(crate) fn handle_navigator_key(
         KeyCode::Char('b') if key.modifiers.is_empty() => {
             state.navigator.query.clear();
             state.navigator.state_filter = Some(NavigatorStateFilter::Blocked);
-            state.clamp_navigator_selection_from(terminal_runtimes);
+            state.select_first_navigator_match_from(terminal_runtimes);
         }
         KeyCode::Char('w') if key.modifiers.is_empty() => {
             state.navigator.query.clear();
             state.navigator.state_filter = Some(NavigatorStateFilter::Working);
-            state.clamp_navigator_selection_from(terminal_runtimes);
+            state.select_first_navigator_match_from(terminal_runtimes);
         }
         KeyCode::Char('i') if key.modifiers.is_empty() => {
             state.navigator.query.clear();
             state.navigator.state_filter = Some(NavigatorStateFilter::Idle);
-            state.clamp_navigator_selection_from(terminal_runtimes);
+            state.select_first_navigator_match_from(terminal_runtimes);
         }
         KeyCode::Char('d') if key.modifiers.is_empty() => {
             state.navigator.query.clear();
             state.navigator.state_filter = Some(NavigatorStateFilter::Done);
-            state.clamp_navigator_selection_from(terminal_runtimes);
+            state.select_first_navigator_match_from(terminal_runtimes);
         }
         KeyCode::Char('j') | KeyCode::Down => {
             state.move_navigator_selection_from(terminal_runtimes, 1)
@@ -246,12 +246,12 @@ pub(crate) fn handle_navigator_key(
             state.move_navigator_selection_from(terminal_runtimes, -1)
         }
         KeyCode::Char('d') if key.modifiers == KeyModifiers::CONTROL => state
-            .move_navigator_selection_from(
+            .move_navigator_selection_by_lines_from(
                 terminal_runtimes,
                 (state.navigator_body_rect().height / 2).max(1) as isize,
             ),
         KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => state
-            .move_navigator_selection_from(
+            .move_navigator_selection_by_lines_from(
                 terminal_runtimes,
                 -((state.navigator_body_rect().height / 2).max(1) as isize),
             ),
@@ -281,7 +281,7 @@ pub(crate) fn insert_navigator_search_text(
     }
     state.navigator.state_filter = None;
     state.navigator.query.push_str(text);
-    state.clamp_navigator_selection_from(terminal_runtimes);
+    state.select_first_navigator_match_from(terminal_runtimes);
 }
 
 pub(crate) fn handle_keybind_help_key(state: &mut AppState, key: KeyEvent) {

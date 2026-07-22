@@ -11,7 +11,7 @@ use crate::api::schema::{
     PaneReportMetadataParams, PaneResizeParams, PaneResizeReason, PaneResizeResult,
     PaneSendInputParams, PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneSwapParams,
     PaneSwapReason, PaneSwapResult, PaneTarget, PaneZoomMode, PaneZoomParams, PaneZoomReason,
-    PaneZoomResult, ReadFormat, ReadSource, ResponseResult,
+    PaneZoomResult, ResponseResult,
 };
 use crate::app::actions::{PaneZoomCommand, PaneZoomNoopReason};
 use crate::app::App;
@@ -1179,21 +1179,12 @@ impl App {
         else {
             return pane_not_found(id, &params.pane_id);
         };
-        let requested_lines = params.lines.unwrap_or(80).min(1000) as usize;
-        let text = match params.format {
-            ReadFormat::Text => match params.source {
-                ReadSource::Visible => pane.visible_text(),
-                ReadSource::Recent => pane.recent_text(requested_lines),
-                ReadSource::RecentUnwrapped => pane.recent_unwrapped_text(requested_lines),
-                ReadSource::Detection => pane.detection_text(),
-            },
-            ReadFormat::Ansi => match params.source {
-                ReadSource::Visible => pane.visible_ansi(),
-                ReadSource::Recent => pane.recent_ansi(requested_lines),
-                ReadSource::RecentUnwrapped => pane.recent_unwrapped_ansi(requested_lines),
-                ReadSource::Detection => pane.detection_text(),
-            },
-        };
+        let text = crate::app::api_helpers::read_terminal_snapshot(
+            pane,
+            params.source,
+            params.format,
+            params.lines,
+        );
 
         encode_success(
             id,
@@ -2591,6 +2582,11 @@ mod tests {
             .clone();
         let target = app.state.workspaces[1].tabs[0].root_pane;
         seed_terminal_states(&mut app);
+        app.state
+            .terminals
+            .get_mut(&source_terminal)
+            .unwrap()
+            .set_detected_state(Some(Agent::Pi), AgentState::Idle);
         let previous_pane_id = app.public_pane_id(0, source).unwrap();
         let previous_workspace_id = app.public_workspace_id(0);
         let target_workspace_id = app.public_workspace_id(1);
@@ -2633,6 +2629,11 @@ mod tests {
             Some(&source_terminal)
         );
         assert_eq!(app.parse_pane_id(&previous_pane_id), Some((0, source)));
+        assert!(matches!(
+            app.resolve_agent_target(&previous_pane_id),
+            Err(crate::app::terminal_targets::TerminalTargetError::NotFound { .. })
+        ));
+        assert!(app.resolve_agent_target(&move_result.pane.pane_id).is_ok());
     }
 
     #[test]
