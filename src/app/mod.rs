@@ -233,6 +233,25 @@ fn agent_panel_sort_from_config(
     }
 }
 
+/// `[detect] enabled = false` is a kill switch: it forces off dependent
+/// settings that only make sense when agent detection is running, without
+/// mutating the user's raw configured values (so the raw config still
+/// round-trips correctly on save/reload).
+fn effective_agent_panel_sort(config: &Config) -> state::AgentPanelSort {
+    if !config.detect.enabled {
+        return state::AgentPanelSort::Spaces;
+    }
+    agent_panel_sort_from_config(config.ui.agent_panel_sort)
+}
+
+fn effective_resume_agents_on_restore(config: &Config) -> bool {
+    config.detect.enabled && config.session.resume_agents_on_restore
+}
+
+fn effective_manifest_check(config: &Config) -> bool {
+    config.detect.enabled && config.update.manifest_check
+}
+
 /// Parse the configured agent name list into a deduplicated set of `Agent`
 /// values. Unknown agent names are silently dropped so a typo cannot disable
 /// other valid entries.
@@ -361,6 +380,7 @@ impl App {
     ) -> Self {
         let (prefix_code, prefix_mods) = config.prefix_key();
         crate::kitty_graphics::set_enabled(config.experimental.kitty_graphics);
+        crate::detect::set_detection_enabled(config.detect.enabled);
         let (event_tx, event_rx) = mpsc::channel::<AppEvent>(APP_EVENT_CHANNEL_CAPACITY);
         let render_notify = Arc::new(Notify::new());
         let render_dirty = Arc::new(AtomicBool::new(false));
@@ -400,7 +420,7 @@ impl App {
                 config.advanced.scrollback_limit_bytes,
                 &config.terminal.default_shell,
                 config.terminal.shell_mode,
-                config.session.resume_agents_on_restore,
+                effective_resume_agents_on_restore(config),
                 &config.session.agent_resume_command,
                 event_tx.clone(),
                 render_notify.clone(),
@@ -453,7 +473,7 @@ impl App {
             )
         };
 
-        let agent_panel_sort = agent_panel_sort_from_config(config.ui.agent_panel_sort);
+        let agent_panel_sort = effective_agent_panel_sort(config);
 
         // Validate sidebar bounds before they reach any `u16::clamp(min, max)`
         // call: `clamp` panics when `min > max`. On bad config, fall back to
@@ -608,6 +628,7 @@ impl App {
             sidebar_collapsed_mode: config.ui.sidebar_collapsed_mode,
             sidebar_section_split,
             agent_panel_sort,
+            detect_enabled: config.detect.enabled,
             sidebar_agents: config.ui.sidebar.agents.clone(),
             sidebar_spaces: config.ui.sidebar.spaces.clone(),
             next_agent_state_change_seq: 0,
@@ -689,7 +710,7 @@ impl App {
         let version_check_enabled =
             background_update_check_enabled(no_session, config.update.version_check);
         let manifest_check_enabled =
-            background_update_check_enabled(no_session, config.update.manifest_check);
+            background_update_check_enabled(no_session, effective_manifest_check(config));
         if version_check_enabled {
             let update_tx = event_tx.clone();
             std::thread::spawn(move || crate::update::auto_update(update_tx));
@@ -734,7 +755,7 @@ impl App {
             next_agent_manifest_update_check: manifest_check_enabled
                 .then_some(Instant::now() + AUTO_UPDATE_CHECK_INTERVAL),
             update_version_check_enabled: config.update.version_check,
-            update_manifest_check_enabled: config.update.manifest_check,
+            update_manifest_check_enabled: effective_manifest_check(config),
             loaded_host_cursor: config.ui.host_cursor,
             agent_metadata_deadline: None,
             pending_agent_resume_deadline: None,
@@ -1373,6 +1394,11 @@ impl App {
             }
         }
 
+        if !invalid_section("detect") {
+            self.state.detect_enabled = config.detect.enabled;
+            crate::detect::set_detection_enabled(config.detect.enabled);
+        }
+
         if !invalid_section("ui") {
             // Validate sidebar bounds before they reach any `u16::clamp` call.
             // On `min > max`, treat the entire `[ui]` section as invalid: keep
@@ -1418,8 +1444,7 @@ impl App {
                 self.state.show_agent_labels_on_pane_borders =
                     config.ui.show_agent_labels_on_pane_borders;
                 self.state.hide_tab_bar_when_single_tab = config.ui.hide_tab_bar_when_single_tab;
-                self.state.agent_panel_sort =
-                    agent_panel_sort_from_config(config.ui.agent_panel_sort);
+                self.state.agent_panel_sort = effective_agent_panel_sort(config);
                 self.state.sidebar_agents = config.ui.sidebar.agents.clone();
                 self.state.sidebar_spaces = config.ui.sidebar.spaces.clone();
                 self.state.agent_panel_scroll = 0;
@@ -1467,7 +1492,7 @@ impl App {
             let previous_version_check_enabled = self.update_version_check_enabled;
             let previous_manifest_check_enabled = self.update_manifest_check_enabled;
             self.update_version_check_enabled = config.update.version_check;
-            self.update_manifest_check_enabled = config.update.manifest_check;
+            self.update_manifest_check_enabled = effective_manifest_check(config);
 
             if !self.update_version_check_enabled {
                 self.next_auto_update_check = None;
@@ -2369,6 +2394,40 @@ mod tests {
         let app = App::new(&config, true, None, api_rx, crate::api::EventHub::default());
 
         assert_eq!(app.state.agent_panel_sort, state::AgentPanelSort::Priority);
+    }
+
+    #[test]
+    fn detect_disabled_forces_off_dependent_settings_at_startup() {
+        let mut config = Config::default();
+        config.detect.enabled = false;
+        config.ui.agent_panel_sort = crate::config::AgentPanelSortConfig::Priority;
+        config.session.resume_agents_on_restore = true;
+        config.update.manifest_check = true;
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let app = App::new(&config, true, None, api_rx, crate::api::EventHub::default());
+
+        assert!(!app.state.detect_enabled);
+        assert_eq!(app.state.agent_panel_sort, state::AgentPanelSort::Spaces);
+        assert!(!app.update_manifest_check_enabled);
+    }
+
+    #[test]
+    fn detect_enabled_live_reload_forces_off_dependent_settings() {
+        let mut config = Config::default();
+        config.ui.agent_panel_sort = crate::config::AgentPanelSortConfig::Priority;
+        config.update.manifest_check = true;
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(&config, true, None, api_rx, crate::api::EventHub::default());
+        assert_eq!(app.state.agent_panel_sort, state::AgentPanelSort::Priority);
+        assert!(app.update_manifest_check_enabled);
+
+        config.detect.enabled = false;
+        app.apply_live_config(&config, &[], &[], false);
+
+        assert!(!app.state.detect_enabled);
+        assert_eq!(app.state.agent_panel_sort, state::AgentPanelSort::Spaces);
+        assert!(!app.update_manifest_check_enabled);
     }
 
     #[test]

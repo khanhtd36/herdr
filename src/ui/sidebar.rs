@@ -886,11 +886,45 @@ pub(super) fn render_sidebar(
         buf[(sep_x, y)].set_style(sep_style);
     }
 
-    let (ws_area, detail_area) = expanded_sidebar_sections(area, app.sidebar_section_split);
-
-    render_workspace_list(app, terminal_runtimes, frame, ws_area, is_navigating);
-    render_agent_detail(app, terminal_runtimes, frame, detail_area);
+    match expanded_sidebar_sections_for_detect_state(
+        area,
+        app.sidebar_section_split,
+        app.detect_enabled,
+    ) {
+        ExpandedSidebarLayout::Split { workspaces, detail } => {
+            render_workspace_list(app, terminal_runtimes, frame, workspaces, is_navigating);
+            render_agent_detail(app, terminal_runtimes, frame, detail);
+        }
+        ExpandedSidebarLayout::WorkspacesOnly { workspaces } => {
+            // Agent detection is disabled: there is no agent detail to show, so
+            // give the workspace list the full sidebar width instead of an
+            // empty detail panel.
+            render_workspace_list(app, terminal_runtimes, frame, workspaces, is_navigating);
+        }
+    }
     render_sidebar_toggle(app, frame, area, false, p);
+}
+
+/// Expanded-sidebar layout decision: split into a workspace list and an
+/// agent detail panel, or (when agent detection is disabled) give the
+/// workspace list the full area since there is no agent detail to show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExpandedSidebarLayout {
+    Split { workspaces: Rect, detail: Rect },
+    WorkspacesOnly { workspaces: Rect },
+}
+
+fn expanded_sidebar_sections_for_detect_state(
+    area: Rect,
+    split_ratio: f32,
+    detect_enabled: bool,
+) -> ExpandedSidebarLayout {
+    if detect_enabled {
+        let (workspaces, detail) = expanded_sidebar_sections(area, split_ratio);
+        ExpandedSidebarLayout::Split { workspaces, detail }
+    } else {
+        ExpandedSidebarLayout::WorkspacesOnly { workspaces: area }
+    }
 }
 
 fn resolved_token_spans(
@@ -1508,6 +1542,51 @@ mod tests {
         assert!(agent_style.add_modifier.contains(Modifier::DIM));
         assert!(!agent_style.add_modifier.contains(Modifier::BOLD));
         assert_eq!(agent_style.bg, Some(app.palette.surface_dim));
+    }
+
+    #[test]
+    fn expanded_sidebar_layout_splits_when_detection_enabled() {
+        let area = Rect::new(0, 0, 26, 20);
+        let layout = expanded_sidebar_sections_for_detect_state(area, 0.5, true);
+
+        let (expected_workspaces, expected_detail) = expanded_sidebar_sections(area, 0.5);
+        assert_eq!(
+            layout,
+            ExpandedSidebarLayout::Split {
+                workspaces: expected_workspaces,
+                detail: expected_detail,
+            }
+        );
+    }
+
+    #[test]
+    fn expanded_sidebar_layout_uses_full_width_when_detection_disabled() {
+        let area = Rect::new(0, 0, 26, 20);
+        let layout = expanded_sidebar_sections_for_detect_state(area, 0.5, false);
+
+        assert_eq!(
+            layout,
+            ExpandedSidebarLayout::WorkspacesOnly { workspaces: area }
+        );
+    }
+
+    #[test]
+    fn render_sidebar_renders_without_agent_detail_when_detection_disabled() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.detect_enabled = false;
+        let workspace = Workspace::test_new("one");
+        app.workspaces = vec![workspace];
+        app.ensure_test_terminals();
+        app.active = Some(0);
+
+        let area = Rect::new(0, 0, 26, 20);
+        app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
+
+        let mut terminal = Terminal::new(TestBackend::new(26, 20)).unwrap();
+        // Must not panic even though the agent detail panel is skipped.
+        terminal
+            .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
     }
 
     #[test]

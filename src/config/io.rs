@@ -6,6 +6,7 @@ use super::{model::LoadedConfig, Config, CONFIG_PATH_ENV_VAR};
 
 const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "advanced",
+    "detect",
     "experimental",
     "keys",
     "onboarding",
@@ -291,6 +292,14 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut diagnostics,
         &mut invalid_sections,
         |section| config.session = section,
+    );
+    load_live_section(
+        table,
+        "detect",
+        "detect config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.detect = section,
     );
     load_live_section(
         table,
