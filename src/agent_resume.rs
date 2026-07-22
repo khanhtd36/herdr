@@ -1,9 +1,29 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
 const MAX_SESSION_ID_LEN: usize = 512;
 const MAX_SESSION_PATH_LEN: usize = 4096;
+
+/// Agent ids that support native session resume via [`plan`], and therefore
+/// the only valid keys for `session.agent_resume_command` overrides.
+pub const RESUMABLE_AGENT_IDS: &[&str] = &[
+    "claude",
+    "codex",
+    "copilot",
+    "devin",
+    "droid",
+    "kimi",
+    "mastracode",
+    "pi",
+    "omp",
+    "hermes",
+    "opencode",
+    "qodercli",
+    "kilo",
+    "cursor",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentSessionRef {
@@ -112,12 +132,17 @@ pub fn session_ref_from_snapshot(
     })
 }
 
-pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<AgentResumePlan> {
+pub fn plan(
+    source: &str,
+    agent: &str,
+    session_ref: &AgentSessionRef,
+    command_overrides: &HashMap<String, String>,
+) -> Option<AgentResumePlan> {
     if !is_official_agent_source(source, agent) {
         return None;
     }
 
-    let argv = match (source, agent, session_ref.kind) {
+    let mut argv = match (source, agent, session_ref.kind) {
         ("herdr:claude", "claude", AgentSessionRefKind::Id) => {
             vec![
                 "claude".into(),
@@ -188,6 +213,16 @@ pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<
         }
         _ => return None,
     };
+
+    if let Some(raw_override) = command_overrides.get(agent) {
+        let tokens: Vec<String> = raw_override
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        if !tokens.is_empty() {
+            argv.splice(0..1, tokens);
+        }
+    }
 
     Some(AgentResumePlan {
         agent: agent.to_string(),
@@ -266,7 +301,8 @@ mod tests {
             plan(
                 "herdr:claude",
                 "claude",
-                &AgentSessionRef::id("claude-session").unwrap()
+                &AgentSessionRef::id("claude-session").unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
@@ -276,7 +312,8 @@ mod tests {
             plan(
                 "herdr:codex",
                 "codex",
-                &AgentSessionRef::id("codex-session").unwrap()
+                &AgentSessionRef::id("codex-session").unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
@@ -286,7 +323,8 @@ mod tests {
             plan(
                 "herdr:copilot",
                 "copilot",
-                &AgentSessionRef::id("copilot-session").unwrap()
+                &AgentSessionRef::id("copilot-session").unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
@@ -296,7 +334,8 @@ mod tests {
             plan(
                 "herdr:devin",
                 "devin",
-                &AgentSessionRef::id("devin-session").unwrap()
+                &AgentSessionRef::id("devin-session").unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
@@ -306,7 +345,8 @@ mod tests {
             plan(
                 "herdr:droid",
                 "droid",
-                &AgentSessionRef::id("droid-session").unwrap()
+                &AgentSessionRef::id("droid-session").unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
@@ -316,7 +356,8 @@ mod tests {
             plan(
                 "herdr:kimi",
                 "kimi",
-                &AgentSessionRef::id("kimi-session").unwrap()
+                &AgentSessionRef::id("kimi-session").unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
@@ -326,7 +367,8 @@ mod tests {
             plan(
                 "herdr:mastracode",
                 "mastracode",
-                &AgentSessionRef::id("mastracode-session").unwrap()
+                &AgentSessionRef::id("mastracode-session").unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
@@ -336,7 +378,8 @@ mod tests {
             plan(
                 "herdr:pi",
                 "pi",
-                &AgentSessionRef::path(&pi_session).unwrap()
+                &AgentSessionRef::path(&pi_session).unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
@@ -346,7 +389,8 @@ mod tests {
             plan(
                 "herdr:omp",
                 "omp",
-                &AgentSessionRef::path(&omp_session).unwrap()
+                &AgentSessionRef::path(&omp_session).unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
@@ -356,7 +400,8 @@ mod tests {
             plan(
                 "herdr:hermes",
                 "hermes",
-                &AgentSessionRef::id("hermes-session").unwrap()
+                &AgentSessionRef::id("hermes-session").unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
@@ -366,7 +411,8 @@ mod tests {
             plan(
                 "herdr:opencode",
                 "opencode",
-                &AgentSessionRef::id("opencode-session").unwrap()
+                &AgentSessionRef::id("opencode-session").unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
@@ -376,7 +422,8 @@ mod tests {
             plan(
                 "herdr:qodercli",
                 "qodercli",
-                &AgentSessionRef::id("qoder-session").unwrap()
+                &AgentSessionRef::id("qoder-session").unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
@@ -386,7 +433,8 @@ mod tests {
             plan(
                 "herdr:kilo",
                 "kilo",
-                &AgentSessionRef::id("kilo-session").unwrap()
+                &AgentSessionRef::id("kilo-session").unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
@@ -396,11 +444,81 @@ mod tests {
             plan(
                 "herdr:cursor",
                 "cursor",
-                &AgentSessionRef::id("cursor-session").unwrap()
+                &AgentSessionRef::id("cursor-session").unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
             vec!["cursor-agent", "--resume", "cursor-session"]
+        );
+    }
+
+    #[test]
+    fn command_override_replaces_binary_and_keeps_suffix_args() {
+        let overrides = HashMap::from([("claude".to_string(), "cld".to_string())]);
+        let claude_plan = plan(
+            "herdr:claude",
+            "claude",
+            &AgentSessionRef::id("claude-session").unwrap(),
+            &overrides,
+        )
+        .unwrap();
+        assert_eq!(claude_plan.argv, vec!["cld", "--resume", "claude-session"]);
+    }
+
+    #[test]
+    fn command_override_splits_multiple_tokens() {
+        let overrides = HashMap::from([(
+            "claude".to_string(),
+            "claude --dangerously-skip-permissions".to_string(),
+        )]);
+        let claude_plan = plan(
+            "herdr:claude",
+            "claude",
+            &AgentSessionRef::id("claude-session").unwrap(),
+            &overrides,
+        )
+        .unwrap();
+        assert_eq!(
+            claude_plan.argv,
+            vec![
+                "claude",
+                "--dangerously-skip-permissions",
+                "--resume",
+                "claude-session"
+            ]
+        );
+    }
+
+    #[test]
+    fn command_override_ignores_empty_or_whitespace_value() {
+        let overrides = HashMap::from([("claude".to_string(), "   ".to_string())]);
+        let claude_plan = plan(
+            "herdr:claude",
+            "claude",
+            &AgentSessionRef::id("claude-session").unwrap(),
+            &overrides,
+        )
+        .unwrap();
+        assert_eq!(
+            claude_plan.argv,
+            vec!["claude", "--resume", "claude-session"]
+        );
+    }
+
+    #[test]
+    fn command_override_ignores_unrelated_agent_keys() {
+        let overrides = HashMap::from([("codex".to_string(), "cdx".to_string())]);
+        let claude_plan = plan(
+            "herdr:claude",
+            "claude",
+            &AgentSessionRef::id("claude-session").unwrap(),
+            &overrides,
+        )
+        .unwrap();
+        assert_eq!(
+            claude_plan.argv,
+            vec!["claude", "--resume", "claude-session"]
         );
     }
 
@@ -410,13 +528,15 @@ mod tests {
         assert!(plan(
             "custom:claude",
             "claude",
-            &AgentSessionRef::id("session").unwrap()
+            &AgentSessionRef::id("session").unwrap(),
+            &HashMap::new()
         )
         .is_none());
         assert!(plan(
             "herdr:claude",
             "claude",
-            &AgentSessionRef::path(&claude_session).unwrap()
+            &AgentSessionRef::path(&claude_session).unwrap(),
+            &HashMap::new()
         )
         .is_none());
     }
@@ -567,18 +687,31 @@ mod tests {
     #[test]
     fn ids_are_data_not_shell_text() {
         let id = "abc; rm -rf /";
-        let codex_plan = plan("herdr:codex", "codex", &AgentSessionRef::id(id).unwrap()).unwrap();
+        let codex_plan = plan(
+            "herdr:codex",
+            "codex",
+            &AgentSessionRef::id(id).unwrap(),
+            &HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(codex_plan.argv, vec!["codex", "resume", id]);
 
         let copilot_plan = plan(
             "herdr:copilot",
             "copilot",
             &AgentSessionRef::id(id).unwrap(),
+            &HashMap::new(),
         )
         .unwrap();
         assert_eq!(copilot_plan.argv, vec!["copilot", "--resume=abc; rm -rf /"]);
 
-        let devin_plan = plan("herdr:devin", "devin", &AgentSessionRef::id(id).unwrap()).unwrap();
+        let devin_plan = plan(
+            "herdr:devin",
+            "devin",
+            &AgentSessionRef::id(id).unwrap(),
+            &HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(devin_plan.argv, vec!["devin", "--resume", id]);
     }
 
@@ -592,31 +725,36 @@ mod tests {
         assert!(plan(
             "herdr:hermes",
             "hermes",
-            &AgentSessionRef::path(&hermes_session).unwrap()
+            &AgentSessionRef::path(&hermes_session).unwrap(),
+            &HashMap::new()
         )
         .is_none());
         assert!(plan(
             "herdr:opencode",
             "opencode",
-            &AgentSessionRef::path(&opencode_session).unwrap()
+            &AgentSessionRef::path(&opencode_session).unwrap(),
+            &HashMap::new()
         )
         .is_none());
         assert!(plan(
             "herdr:kilo",
             "kilo",
-            &AgentSessionRef::path(&kilo_session).unwrap()
+            &AgentSessionRef::path(&kilo_session).unwrap(),
+            &HashMap::new()
         )
         .is_none());
         assert!(plan(
             "herdr:copilot",
             "copilot",
-            &AgentSessionRef::path(&copilot_session).unwrap()
+            &AgentSessionRef::path(&copilot_session).unwrap(),
+            &HashMap::new()
         )
         .is_none());
         assert!(plan(
             "herdr:devin",
             "devin",
-            &AgentSessionRef::path(&devin_session).unwrap()
+            &AgentSessionRef::path(&devin_session).unwrap(),
+            &HashMap::new()
         )
         .is_none());
         assert!(session_ref_from_snapshot(

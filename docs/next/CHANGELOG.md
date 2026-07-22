@@ -6,6 +6,7 @@
 - Added named-agent `start`, `prompt`, and completion-wait workflows. Agent startup now targets an existing pane without changing topology, validates the requested interactive agent kind, and accepts optional native arguments after `--`.
 - Added `ui.sidebar_start_collapsed` to launch Herdr with the sidebar collapsed. (#1463)
 - Added macOS support for the `HERDR_AGENT=<agent>` foreground-process hint, allowing agents hidden behind host-visible wrappers such as `nono` to use the named agent's screen manifest. (#679)
+- Added `session.agent_resume_command` to override the resume binary (and leading flags) used per Agent, e.g. running a renamed or wrapped `claude` binary, or injecting extra CLI flags before Herdr's own resume arguments.
 
 ### Fixed
 - `herdr config check` now reports unknown config keys with their full paths instead of treating ignored typos as valid configuration. (#1573)
