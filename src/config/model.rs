@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, num::NonZeroUsize};
+use std::{
+    collections::{BTreeSet, HashMap},
+    num::NonZeroUsize,
+};
 
 use crossterm::event::KeyModifiers;
 use serde::{de, Deserialize, Deserializer, Serialize};
@@ -247,12 +250,20 @@ pub struct SessionConfig {
     /// Resume supported AI-agent panes into their native conversation sessions
     /// when restoring a Herdr session. Default: true.
     pub resume_agents_on_restore: bool,
+    /// Per-agent override for the command used to resume a native agent
+    /// session, keyed by agent id (e.g. "claude"). The value replaces only
+    /// the resume binary; Herdr's own resume arguments (e.g. `--resume
+    /// <id>`) are still appended after it. Whitespace-separated, so a value
+    /// can also carry extra flags, e.g. "claude --dangerously-skip-permissions".
+    /// Unknown agent ids or empty values are ignored. Default: empty.
+    pub agent_resume_command: HashMap<String, String>,
 }
 
 impl Default for SessionConfig {
     fn default() -> Self {
         Self {
             resume_agents_on_restore: true,
+            agent_resume_command: HashMap::new(),
         }
     }
 }

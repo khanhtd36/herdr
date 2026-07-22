@@ -1127,7 +1127,13 @@ impl TerminalState {
             return false;
         };
         crate::detect::parse_agent_label(agent_label) == Some(detected_agent)
-            && crate::agent_resume::plan(source, agent_label, session_ref).is_some()
+            && crate::agent_resume::plan(
+                source,
+                agent_label,
+                session_ref,
+                &std::collections::HashMap::new(),
+            )
+            .is_some()
     }
 
     fn accept_hook_report(&mut self, source: &str, seq: Option<u64>) -> bool {

@@ -418,6 +418,18 @@ resume_agents_on_restore = true
 
 Only panes with a valid native session reference from an official integration can resume; other panes restore as normal shells. See [Session state and restore](/docs/session-state/) for supported Agents and persistence behavior.
 
+### Custom resume command
+
+By default Herdr resumes each Agent with its official CLI binary name (e.g. `claude`, `codex`). Override the binary and/or add flags per Agent with `agent_resume_command`, keyed by Agent id:
+
+```toml
+[session.agent_resume_command]
+claude = "cld"
+codex = "codex --dangerously-bypass-approvals-and-sandbox"
+```
+
+The value replaces only the resume binary and any extra tokens before it; Herdr still appends its own resume arguments (e.g. `--resume <session-id>`) after it. Values are split on whitespace, so quoting or arguments containing spaces are not supported. Unknown Agent ids or empty values are ignored, with a config diagnostic.
+
 ## IME cursor tracking
 
 On macOS, AI Agent TUIs that hide the hardware cursor can prevent native input-method candidate windows from following the focused pane. Reveal a cursor anchor for those panes with:

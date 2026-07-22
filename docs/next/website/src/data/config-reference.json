@@ -1022,6 +1022,12 @@
           "type": "boolean",
           "default": "true",
           "description": "Resume supported AI-agent panes into their native conversation sessions when restoring a Herdr session."
+        },
+        {
+          "key": "session.agent_resume_command",
+          "type": "table<string, string>",
+          "default": "{}",
+          "description": "Per-agent override for the resume command, keyed by agent id (e.g. \"claude\"). The value replaces only the resume binary and any leading flags; Herdr's own resume arguments are still appended after it. Whitespace-separated, no quoting support. Unknown agent ids or empty values are ignored."
         }
       ]
     },

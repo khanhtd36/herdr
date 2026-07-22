@@ -73,6 +73,27 @@ impl Config {
             .chain(self.remote_image_paste_key().err())
             .chain(self.ui.sound.diagnostics())
             .chain(self.invalid_sidebar_bounds_diagnostic())
+            .chain(self.agent_resume_command_diagnostics())
+            .collect()
+    }
+
+    pub(crate) fn agent_resume_command_diagnostics(&self) -> Vec<String> {
+        self.session
+            .agent_resume_command
+            .iter()
+            .filter_map(|(agent, command)| {
+                if !crate::agent_resume::RESUMABLE_AGENT_IDS.contains(&agent.as_str()) {
+                    Some(format!(
+                        "session.agent_resume_command has unknown agent {agent:?}; ignoring"
+                    ))
+                } else if command.trim().is_empty() {
+                    Some(format!(
+                        "session.agent_resume_command.{agent} is empty; using default command"
+                    ))
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
