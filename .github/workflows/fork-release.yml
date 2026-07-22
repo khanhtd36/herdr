@@ -1,0 +1,217 @@
+name: Fork release
+
+on:
+  push:
+    tags:
+      - "fork-v*"
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RUST_TOOLCHAIN_VERSION: 1.96.1
+
+jobs:
+  verify-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          TAG_VERSION="${GITHUB_REF_NAME#fork-v}"
+          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+            echo "error: tag $GITHUB_REF_NAME doesn't match Cargo.toml version $CARGO_VERSION"
+            exit 1
+          fi
+
+  build-linux:
+    needs: verify-version
+    runs-on: ubuntu-latest
+    env:
+      LIBGHOSTTY_VT_OPTIMIZE: ReleaseFast
+      LIBGHOSTTY_VT_SIMD: 'true'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+
+      - name: Prefer official Ubuntu mirrors over Azure
+        run: |
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '/azure.archive.ubuntu.com/d' /etc/apt/apt-mirrors.txt
+          fi
+
+      - name: Install Linux build tools
+        run: |
+          sudo find /etc/apt/sources.list.d -type f \( -iname '*microsoft*' -o -iname '*azure-cli*' \) -print -delete
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build musl-tools
+
+      - name: Remove Zig caches
+        run: rm -rf .zig-cache vendor/libghostty-vt/.zig-cache vendor/libghostty-vt/zig-out
+
+      - name: Build
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+
+      - name: Rename binary
+        run: cp target/x86_64-unknown-linux-musl/release/herdr herdr-linux-x86_64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: herdr-linux-x86_64
+          path: herdr-linux-x86_64
+
+  build-macos:
+    needs: verify-version
+    runs-on: macos-latest
+    env:
+      LIBGHOSTTY_VT_OPTIMIZE: ReleaseFast
+      LIBGHOSTTY_VT_SIMD: 'true'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: aarch64-apple-darwin
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+
+      - name: Install macOS build tools
+        run: brew install cmake ninja
+
+      - name: Remove Zig caches
+        run: rm -rf .zig-cache vendor/libghostty-vt/.zig-cache vendor/libghostty-vt/zig-out
+
+      - name: Build
+        run: cargo build --release --locked --target aarch64-apple-darwin
+
+      - name: Rename binary
+        run: cp target/aarch64-apple-darwin/release/herdr herdr-macos-aarch64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: herdr-macos-aarch64
+          path: herdr-macos-aarch64
+
+  build-windows:
+    needs: verify-version
+    runs-on: windows-latest
+    env:
+      LIBGHOSTTY_VT_OPTIMIZE: ReleaseSafe
+      LIBGHOSTTY_VT_SIMD: 'false'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+
+      - name: Remove Zig caches
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force .zig-cache -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force vendor/libghostty-vt/.zig-cache -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force vendor/libghostty-vt/zig-out -ErrorAction SilentlyContinue
+
+      - name: Build
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Rename binary
+        shell: pwsh
+        run: Copy-Item target\x86_64-pc-windows-msvc\release\herdr.exe herdr-windows-x86_64.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: herdr-windows-x86_64
+          path: herdr-windows-x86_64.exe
+
+  release:
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      windows_asset_url: ${{ steps.urls.outputs.windows_asset_url }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Determine version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#fork-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+
+      - name: Create release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
+        with:
+          name: herdr-khanhtd36 ${{ steps.version.outputs.version }}
+          body: |
+            Unofficial fork of [herdr](https://github.com/ogulcancelik/herdr) built by khanhtd36.
+            Not affiliated with the original project.
+          files: |
+            herdr-linux-x86_64/herdr-linux-x86_64
+            herdr-macos-aarch64/herdr-macos-aarch64
+            herdr-windows-x86_64/herdr-windows-x86_64.exe
+
+      - name: Resolve asset URLs
+        id: urls
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "windows_asset_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/herdr-windows-x86_64.exe" >> "$GITHUB_OUTPUT"
+
+  winget:
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - name: Install wingetcreate
+        run: |
+          Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+
+      - name: Submit winget manifest update
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          .\wingetcreate.exe update khanhtd36.herdr-khanhtd36 `
+            --version "${{ needs.release.outputs.version }}" `
+            --urls "${{ needs.release.outputs.windows_asset_url }}" `
+            --submit `
+            --token "$env:WINGET_TOKEN"

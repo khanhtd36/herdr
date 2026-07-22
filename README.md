@@ -1,5 +1,6 @@
-# herdr
+# herdr-khanhtd36
 
+> **Unofficial fork.** This is `khanhtd36`'s fork of [herdr](https://github.com/ogulcancelik/herdr), not affiliated with or endorsed by the original project. For the official release, see [ogulcancelik/herdr](https://github.com/ogulcancelik/herdr) and [herdr.dev](https://herdr.dev).
 
 <p align="center">
   <img src="assets/logo.png" alt="herdr" width="100" />
@@ -33,13 +34,15 @@ https://github.com/user-attachments/assets/043ec09f-4bdd-41d5-aee0-8fda6b83e267
 
 ---
 
-## install
+## install (this fork)
 
-```bash
-curl -fsSL https://herdr.dev/install.sh | sh
+```powershell
+winget install khanhtd36.herdr-khanhtd36
 ```
 
-or `brew install herdr` · `mise use -g herdr` · windows beta: `powershell -ExecutionPolicy Bypass -c "irm https://herdr.dev/install.ps1 | iex"` · [binaries](https://github.com/ogulcancelik/herdr/releases)
+or grab a binary from [releases](https://github.com/khanhtd36/herdr/releases). the binary is still named `herdr`.
+
+for the official upstream project, see the [install section of ogulcancelik/herdr](https://github.com/ogulcancelik/herdr#install).
 
 then start it where the work lives:
 
