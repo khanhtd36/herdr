@@ -596,6 +596,7 @@ fn spawn_basic_detection_task(
         let mut last_screen_scan_detection_content_seq = None;
         let mut agent_startup_grace_until = None;
         let mut pending_idle = PendingIdleConfirmation::default();
+        let mut was_detect_enabled = true;
 
         loop {
             let sleep_duration = if pending_idle.active() {
@@ -626,6 +627,43 @@ fn spawn_basic_detection_task(
                     pending_idle.clear();
                 }
             }
+
+            if !crate::detect::detection_enabled() {
+                if was_detect_enabled {
+                    was_detect_enabled = false;
+                    agent_presence = AgentDetectionPresence::from_agent(None);
+                    state = AgentState::Unknown;
+                    last_visible_idle = false;
+                    last_visible_blocker = false;
+                    last_visible_working = false;
+                    last_visible_signal_refresh = None;
+                    last_process_check = std::time::Instant::now();
+                    last_foreground_pgid = None;
+                    has_process_probe = false;
+                    acquisition_started_at = None;
+                    last_content_change_at = None;
+                    pending_foreground_shell_clear = false;
+                    foreground_shell_exit_reported = false;
+                    release_was_active = false;
+                    last_detection_text.clear();
+                    last_screen_scan_detection_content_seq = None;
+                    agent_startup_grace_until = None;
+                    pending_idle.clear();
+                    publish_state_changed_event(
+                        state_events.clone(),
+                        pane_id,
+                        None,
+                        AgentState::Unknown,
+                        false,
+                        false,
+                        false,
+                        std::time::Instant::now(),
+                    )
+                    .await;
+                }
+                continue;
+            }
+            was_detect_enabled = true;
 
             let now = std::time::Instant::now();
             let suppressed_agent = active_pending_release(&pending_release_for_task, now);
@@ -2002,6 +2040,7 @@ impl PaneRuntime {
                 let mut last_screen_scan_detection_content_seq = None;
                 let mut agent_startup_grace_until = None;
                 let mut pending_idle = PendingIdleConfirmation::default();
+                let mut was_detect_enabled = true;
 
                 tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -2042,6 +2081,43 @@ impl PaneRuntime {
                             pending_idle.clear();
                         }
                     }
+
+                    if !crate::detect::detection_enabled() {
+                        if was_detect_enabled {
+                            was_detect_enabled = false;
+                            agent_presence = AgentDetectionPresence::from_agent(None);
+                            state = AgentState::Unknown;
+                            last_visible_idle = false;
+                            last_foreground_pgid = None;
+                            has_process_probe = false;
+                            acquisition_started_at = None;
+                            last_content_change_at = None;
+                            pending_foreground_shell_clear = false;
+                            foreground_shell_exit_reported = false;
+                            release_was_active = false;
+                            pending_restore_probe = false;
+                            last_visible_blocker = false;
+                            last_visible_working = false;
+                            last_visible_signal_refresh = None;
+                            last_detection_text.clear();
+                            last_screen_scan_detection_content_seq = None;
+                            agent_startup_grace_until = None;
+                            pending_idle.clear();
+                            publish_state_changed_event(
+                                state_events.clone(),
+                                pane_id,
+                                None,
+                                AgentState::Unknown,
+                                false,
+                                false,
+                                false,
+                                Instant::now(),
+                            )
+                            .await;
+                        }
+                        continue;
+                    }
+                    was_detect_enabled = true;
 
                     let now = Instant::now();
                     let suppressed_agent = active_pending_release(&pending_release_for_task, now);

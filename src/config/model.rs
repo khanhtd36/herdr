@@ -257,6 +257,20 @@ impl Default for SessionConfig {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct DetectConfig {
+    /// Enable AI-agent detection (foreground process probing and screen-content
+    /// detection). Set false to fully disable detection. Default: true.
+    pub enabled: bool,
+}
+
+impl Default for DetectConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigReloadStatus {
@@ -291,6 +305,7 @@ pub struct Config {
     pub theme: ThemeConfig,
     pub terminal: TerminalConfig,
     pub session: SessionConfig,
+    pub detect: DetectConfig,
     pub update: UpdateConfig,
     pub keys: KeysConfig,
     pub ui: UiConfig,
@@ -1203,6 +1218,19 @@ resume_agents_on_restore = false
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.session.resume_agents_on_restore);
+    }
+
+    #[test]
+    fn detect_enabled_defaults_on_and_parses() {
+        let default_config = Config::default();
+        assert!(default_config.detect.enabled);
+
+        let toml = r#"
+[detect]
+enabled = false
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(!config.detect.enabled);
     }
 
     #[test]
