@@ -676,8 +676,10 @@ fn manifest_actions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::api::schema::PaneListParams;
     use crate::api::schema::{
-        Method, PaneListParams, PluginSourceInfo, PluginSourceKind, Request, SuccessResponse,
+        Method, PluginSourceInfo, PluginSourceKind, Request, SuccessResponse,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -716,6 +718,7 @@ mod tests {
     /// Wait for non-empty contents at `path`. Shell `>` creates the file empty
     /// before the command writes, so waiting on existence alone can read EOF.
     /// `pump` advances any event loop the command depends on.
+    #[cfg(unix)]
     fn read_capture_when_ready(path: &std::path::Path, mut pump: impl FnMut()) -> String {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {

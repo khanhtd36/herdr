@@ -224,7 +224,7 @@ impl TerminalRuntime {
         self.0.agent_detection_reset_notify_for_test()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn agent_detection_enabled_for_test(&self) -> bool {
         self.0.agent_detection_enabled_for_test()
     }
