@@ -69,6 +69,12 @@ Local overrides always win. Without a local override, Herdr uses the newer compa
 
 Remote manifests patch detection rules for agents Herdr already knows how to identify. Adding a completely new agent still requires a Herdr binary update for process detection, labels, and integration behavior.
 
+## Disabling agent detection
+
+Set `[detect] enabled = false` to fully disable AI-agent detection: Herdr stops probing foreground processes and reading pane screen content for agent state. This is a kill switch, not a per-agent setting.
+
+Disabling detection also forces off `[session] resume_agents_on_restore`, `[update] manifest_check`, and `[ui] agent_panel_sort` (treated as `spaces`), since those all depend on detection running. The sidebar's agent detail panel collapses and the workspace list uses the full sidebar width instead.
+
 The running server loads active manifests into memory on startup. Automatic remote manifest updates reload that in-memory cache after new rules are written. Run `herdr server update-agent-manifests` to fetch remote manifest updates immediately and reload the running server. After editing a local override manually, restart Herdr or run `herdr server reload-agent-manifests` to apply the file to the running server.
 
 Use `herdr agent explain` when a pane shows the wrong state:

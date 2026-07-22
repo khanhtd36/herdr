@@ -6,6 +6,27 @@
 pub mod manifest;
 pub mod manifest_update;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Process-wide `[detect] enabled` kill switch. A single shared flag (not
+/// per-pane) so toggling it once — at startup or on config reload — affects
+/// every already-running pane detection loop's next tick without needing to
+/// walk panes individually. Mirrors the existing
+/// `crate::kitty_graphics::is_enabled`/`set_enabled` convention for a
+/// process-wide config-derived flag checked at pane-creation/detection time.
+static DETECTION_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Enable or disable agent detection process-wide. Set from `[detect]
+/// enabled` at startup and on live config reload.
+pub fn set_detection_enabled(enabled: bool) {
+    DETECTION_ENABLED.store(enabled, Ordering::Release);
+}
+
+/// True unless `[detect] enabled = false` has been applied.
+pub fn detection_enabled() -> bool {
+    DETECTION_ENABLED.load(Ordering::Acquire)
+}
+
 /// The detected state of a terminal pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentState {
@@ -612,6 +633,17 @@ fn is_generic_runtime_or_shell(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detection_enabled_defaults_true_and_round_trips_through_set() {
+        assert!(detection_enabled());
+
+        set_detection_enabled(false);
+        assert!(!detection_enabled());
+
+        set_detection_enabled(true);
+        assert!(detection_enabled());
+    }
 
     fn foreground_process(
         pid: u32,
