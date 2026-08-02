@@ -2210,7 +2210,7 @@ command = ["sh", "-c", "printf %s ${{HERDR_PANE_ID-unset}} > '{}'; sleep 1"]
         make_stale(&mut app);
         assert!(!app
             .invoke_plugin_link_handler_for_url(
-                "https://github.com/ogulcancelik/herdr/issues/1174",
+                "https://github.com/herdrdev/herdr/issues/1174",
                 pane_id,
             )
             .unwrap());
@@ -2738,7 +2738,7 @@ action = "open"
 
         let handled = app
             .invoke_plugin_link_handler_for_url(
-                "https://github.com/ogulcancelik/herdr/issues/398",
+                "https://github.com/herdrdev/herdr/issues/398",
                 pane_id,
             )
             .expect("link handler should invoke");
@@ -2771,7 +2771,7 @@ action = "open"
         assert_eq!(finished.action_id.as_deref(), Some("open"));
         assert_eq!(
             finished.stdout.as_deref(),
-            Some("github-issue|https://github.com/ogulcancelik/herdr/issues/398")
+            Some("github-issue|https://github.com/herdrdev/herdr/issues/398")
         );
 
         let _ = std::fs::remove_dir_all(root);
@@ -2816,7 +2816,7 @@ action = "generic"
         link_manifest(&mut app, &root);
 
         let (_plugin, handler) = app
-            .find_plugin_link_handler("https://github.com/ogulcancelik/herdr/issues/398")
+            .find_plugin_link_handler("https://github.com/herdrdev/herdr/issues/398")
             .expect("handler should match");
         assert_eq!(handler.id, "z-specific");
         assert_eq!(handler.action, "specific");
