@@ -11,6 +11,15 @@ pub enum HostAppearance {
     Light,
 }
 
+impl HostAppearance {
+    pub const fn color_scheme_report(self) -> &'static [u8] {
+        match self {
+            Self::Dark => b"\x1b[?997;1n",
+            Self::Light => b"\x1b[?997;2n",
+        }
+    }
+}
+
 impl RgbColor {
     pub fn inferred_appearance(self) -> HostAppearance {
         let luminance = u32::from(self.r) * 299 + u32::from(self.g) * 587 + u32::from(self.b) * 114;
@@ -46,6 +55,8 @@ pub enum DefaultColorKind {
 }
 
 pub const HOST_COLOR_QUERY_SEQUENCE: &str = "\x1b]10;?\x1b\\\x1b]11;?\x1b\\";
+#[cfg(any(not(windows), test))]
+pub const HOST_COLOR_SCHEME_QUERY_SEQUENCE: &str = "\x1b[?996n";
 pub const HOST_COLOR_SCHEME_REPORT_ENABLE_SEQUENCE: &str = "\x1b[?2031h";
 pub const HOST_COLOR_SCHEME_REPORT_DISABLE_SEQUENCE: &str = "\x1b[?2031l";
 

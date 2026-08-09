@@ -2098,6 +2098,15 @@ impl HeadlessServer {
     /// Returns true if the event changed visual state (requiring a re-render).
     fn handle_internal_event_with_forwarding(&mut self, ev: AppEvent) -> bool {
         match &ev {
+            AppEvent::TerminalBell { pane_id, count } => {
+                if !self.send_to_foreground_client(ServerMessage::TerminalBell { count: *count }) {
+                    debug!(
+                        pane = pane_id.raw(),
+                        count, "dropped terminal bell without a foreground client"
+                    );
+                }
+                false
+            }
             AppEvent::ClipboardWrite { content } => {
                 // Clipboard writes are client-local side effects. Forward them only to
                 // the foreground client instead of broadcasting to every attached client.
@@ -2710,7 +2719,8 @@ impl HeadlessServer {
                 .iter()
                 .any(|event| matches!(event, crate::raw_input::RawInputEvent::OuterFocusLost))
             {
-                self.app.clear_input_source(client_id);
+                // Focus loss is not a teardown, so the pending URL click stays.
+                self.app.release_input_source_headless(client_id);
             }
         }
         let events = events_for_app_routing(events, source_was_foreground, source_is_full_app);
@@ -4072,6 +4082,12 @@ impl HeadlessServer {
                         } else {
                             crate::kitty_graphics::HostCellSize::default()
                         };
+                    let preserved_scroll = (!is_foreground).then_some((
+                        self.app.state.workspace_scroll,
+                        self.app.state.agent_panel_scroll,
+                        self.app.state.tab_scroll,
+                        self.app.state.mobile_switcher_scroll,
+                    ));
                     let (buffer, cursor) =
                         crate::server::render_stream::render_virtual_with_runtime_registry(
                             &mut self.app.state,
@@ -4080,6 +4096,12 @@ impl HeadlessServer {
                             is_foreground,
                             render_cell_size,
                         );
+                    if let Some((workspace, agent_panel, tab, mobile_switcher)) = preserved_scroll {
+                        self.app.state.workspace_scroll = workspace;
+                        self.app.state.agent_panel_scroll = agent_panel;
+                        self.app.state.tab_scroll = tab;
+                        self.app.state.mobile_switcher_scroll = mobile_switcher;
+                    }
                     crate::render_prof::duration_since(
                         "full_render.render_virtual",
                         render_started,
@@ -4897,7 +4919,8 @@ mod tests {
     use super::*;
 
     use crate::app::AppState;
-    use crate::protocol::CursorState;
+    use crate::protocol::{CellData, CursorState};
+    use unicode_width::UnicodeWidthStr;
 
     #[path = "pane_graphics.rs"]
     mod pane_graphics_tests;
@@ -5337,6 +5360,16 @@ mod tests {
         for (idx, (actual_cell, expected_cell)) in
             actual.cells.iter().zip(expected.cells.iter()).enumerate()
         {
+            if cells_equivalent_for_frame_compare(
+                &actual.cells,
+                &expected.cells,
+                usize::from(actual.width),
+                idx,
+                actual_cell,
+                expected_cell,
+            ) {
+                continue;
+            }
             assert_eq!(
                 actual_cell,
                 expected_cell,
@@ -5345,6 +5378,65 @@ mod tests {
                 idx / usize::from(actual.width),
             );
         }
+    }
+
+    fn cells_equivalent_for_frame_compare(
+        actual_cells: &[CellData],
+        expected_cells: &[CellData],
+        width: usize,
+        idx: usize,
+        actual: &CellData,
+        expected: &CellData,
+    ) -> bool {
+        if actual == expected {
+            return true;
+        }
+        if !cell_style_without_symbol_eq(actual, expected) {
+            return false;
+        }
+        if !matches!(
+            (actual.symbol.as_str(), expected.symbol.as_str()),
+            ("", " ") | (" ", "")
+        ) {
+            return false;
+        }
+        covered_by_previous_wide_cell(actual_cells, width, idx)
+            || covered_by_previous_wide_cell(expected_cells, width, idx)
+    }
+
+    fn cell_style_without_symbol_eq(a: &CellData, b: &CellData) -> bool {
+        a.fg == b.fg
+            && a.bg == b.bg
+            && a.modifier == b.modifier
+            && a.skip == b.skip
+            && a.hyperlink == b.hyperlink
+    }
+
+    fn covered_by_previous_wide_cell(cells: &[CellData], width: usize, idx: usize) -> bool {
+        if idx == 0 || idx.is_multiple_of(width) {
+            return false;
+        }
+        frame_cell_display_width(&cells[idx - 1]) > 1
+    }
+
+    fn frame_cell_display_width(cell: &CellData) -> usize {
+        if is_halfwidth_katakana_voiced_grapheme(&cell.symbol) {
+            return 2;
+        }
+        cell.symbol.width()
+    }
+
+    fn is_halfwidth_katakana_voiced_grapheme(symbol: &str) -> bool {
+        let mut chars = symbol.chars();
+        let Some(base) = chars.next() else {
+            return false;
+        };
+        let Some(mark) = chars.next() else {
+            return false;
+        };
+        chars.next().is_none()
+            && ('\u{ff66}'..='\u{ff9d}').contains(&base)
+            && matches!(mark, '\u{ff9e}' | '\u{ff9f}')
     }
 
     #[test]
@@ -6465,6 +6557,22 @@ next_tab = ""
                 input_rx.try_recv().expect("forwarded page key"),
                 Bytes::from_static(b"\x1b[5~")
             );
+        });
+    }
+
+    #[test]
+    fn terminal_attach_page_key_host_scrolls_shell_like_decckm_with_bracketed_paste() {
+        with_terminal_attach_page_key_runtime(b"\x1b[?1h\x1b[?2004h", 0, |runtime, input_rx| {
+            apply_terminal_attach_page_up(runtime);
+
+            assert_eq!(
+                runtime
+                    .scroll_metrics()
+                    .expect("scroll metrics")
+                    .offset_from_bottom,
+                4
+            );
+            assert!(input_rx.try_recv().is_err());
         });
     }
 
@@ -9482,6 +9590,72 @@ next_tab = ""
             other => panic!("expected ReloadSoundConfig, got {other:?}"),
         }
         assert!(!server.app.state.request_client_config_reload);
+    }
+
+    #[test]
+    fn terminal_bell_targets_foreground_client_only() {
+        let mut server = test_headless_server();
+        let (background_tx, background_control_rx, _background_rx) = test_client_writer();
+        let (foreground_tx, foreground_control_rx, _foreground_rx) = test_client_writer();
+
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (120, 40),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(background_tx),
+            ),
+        );
+        server.clients.insert(
+            2,
+            ClientConnection::new(
+                (80, 24),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                2,
+                RenderEncoding::SemanticFrame,
+                Some(foreground_tx),
+            ),
+        );
+        server.foreground_client_id = Some(2);
+
+        let changed = server.handle_internal_event_with_forwarding(AppEvent::TerminalBell {
+            pane_id: crate::layout::PaneId::from_raw(1),
+            count: 3,
+        });
+
+        assert!(!changed);
+        match read_server_message(
+            foreground_control_rx
+                .recv_timeout(Duration::from_millis(100))
+                .expect("foreground terminal bell message"),
+        ) {
+            ServerMessage::TerminalBell { count } => assert_eq!(count, 3),
+            other => panic!("expected terminal bell message, got {other:?}"),
+        }
+        assert!(
+            background_control_rx
+                .recv_timeout(Duration::from_millis(50))
+                .is_err(),
+            "background client should not receive terminal bells"
+        );
+
+        server.foreground_client_id = None;
+        server.handle_internal_event_with_forwarding(AppEvent::TerminalBell {
+            pane_id: crate::layout::PaneId::from_raw(1),
+            count: 1,
+        });
+        assert!(
+            foreground_control_rx
+                .recv_timeout(Duration::from_millis(50))
+                .is_err(),
+            "bells without a foreground client must not be retained"
+        );
     }
 
     #[test]

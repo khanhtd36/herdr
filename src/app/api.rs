@@ -64,6 +64,10 @@ impl App {
                 results,
                 cache_updates,
             } => self.handle_git_status_refreshed(results, cache_updates),
+            ev @ AppEvent::TerminalBell { .. } => {
+                self.handle_internal_event(ev);
+                false
+            }
             ev => {
                 self.handle_internal_event(ev);
                 true
@@ -97,6 +101,15 @@ impl App {
     }
 
     pub(crate) fn handle_internal_event(&mut self, ev: AppEvent) {
+        if let AppEvent::TerminalBell { count, .. } = ev {
+            if let Err(err) =
+                crate::terminal_effects::write_terminal_bells(&mut std::io::stdout(), count)
+            {
+                tracing::warn!(err = %err, "failed to emit terminal bell");
+            }
+            return;
+        }
+
         if let AppEvent::ClipboardWrite { content } = ev {
             #[cfg(not(test))]
             crate::selection::write_osc52_bytes(&content);
@@ -545,6 +558,7 @@ impl App {
             cwd,
             self.state.pane_scrollback_limit_bytes,
             self.state.host_terminal_theme,
+            self.state.host_terminal_appearance,
             crate::pane::PaneShellConfig::new(&self.state.default_shell, self.state.shell_mode),
             &launch_env,
             self.event_tx.clone(),
@@ -1712,6 +1726,7 @@ mod tests {
             live_cwd.clone(),
             0,
             crate::terminal_theme::TerminalTheme::default(),
+            None,
             crate::pane::PaneShellConfig::new("/bin/sh", crate::config::ShellModeConfig::NonLogin),
             &crate::pane::PaneLaunchEnv::default(),
             events,
@@ -1804,6 +1819,7 @@ mod tests {
             live_cwd.clone(),
             0,
             crate::terminal_theme::TerminalTheme::default(),
+            None,
             crate::pane::PaneShellConfig::new("/bin/sh", crate::config::ShellModeConfig::NonLogin),
             &crate::pane::PaneLaunchEnv::default(),
             events,

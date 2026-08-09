@@ -4,7 +4,12 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
 
-use super::command::{hook_command, shell_single_quote};
+use super::claude_settings::{
+    install as install_claude_settings, uninstall as uninstall_claude_settings,
+};
+use super::command::hook_command;
+#[cfg(not(windows))]
+use super::command::shell_single_quote;
 use super::config_edit::{
     build_codex_config_with_hooks, build_kimi_config_with_hooks, ensure_command_hook,
     ensure_direct_command_hook, ensure_flat_command_hook, ensure_hermes_plugin_enabled,
@@ -123,43 +128,17 @@ pub(crate) fn install_claude() -> io::Result<ClaudeInstallPaths> {
     make_executable(&hook_path)?;
 
     let settings_path = dir.join("settings.json");
-    let mut settings = if settings_path.is_file() {
-        serde_json::from_str::<Value>(&fs::read_to_string(&settings_path)?).map_err(|err| {
-            io::Error::other(format!(
-                "failed to parse {}: {err}",
-                settings_path.display()
-            ))
-        })?
+    let existing_settings = if settings_path.is_file() {
+        fs::read_to_string(&settings_path)?
     } else {
-        json!({})
+        "{}".to_string()
     };
-
-    let hooks = ensure_hooks_object(
-        &mut settings,
-        &settings_path,
-        "claude settings",
-        "claude settings hooks",
-    )?;
-    remove_hook_commands(hooks, "PostToolUse", &hook_path, Some("working"))?;
-    remove_hook_commands(hooks, "PostToolUseFailure", &hook_path, Some("working"))?;
-    remove_hook_commands(hooks, "SubagentStop", &hook_path, Some("working"))?;
-    remove_hook_commands(hooks, "PermissionRequest", &hook_path, Some("blocked"))?;
-    remove_hook_commands(hooks, "SessionStart", &hook_path, Some("idle"))?;
-    remove_hook_commands(hooks, "UserPromptSubmit", &hook_path, Some("working"))?;
-    remove_hook_commands(hooks, "PreToolUse", &hook_path, Some("working"))?;
-    remove_hook_commands(hooks, "Stop", &hook_path, Some("idle"))?;
-    remove_hook_commands(hooks, "SessionEnd", &hook_path, Some("release"))?;
-    remove_hook_commands(hooks, "SessionStart", &hook_path, Some("session"))?;
-    ensure_command_hook(
-        hooks,
-        "SessionStart",
-        hook_command(&hook_path, Some("session")),
-        10,
-        Some("*"),
-    )?;
+    let updated_settings = install_claude_settings(&existing_settings, &settings_path, &hook_path)?;
     remove_legacy_bash_hook_file(&hook_path)?;
 
-    fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
+    if updated_settings != existing_settings {
+        fs::write(&settings_path, updated_settings)?;
+    }
 
     Ok(ClaudeInstallPaths {
         hook_path,
@@ -563,43 +542,12 @@ pub(crate) fn uninstall_claude() -> io::Result<ClaudeUninstallResult> {
     let mut updated_settings = false;
 
     if settings_path.is_file() {
-        let mut settings = serde_json::from_str::<Value>(&fs::read_to_string(&settings_path)?)
-            .map_err(|err| {
-                io::Error::other(format!(
-                    "failed to parse {}: {err}",
-                    settings_path.display()
-                ))
-            })?;
-
-        if let Some(hooks) = hooks_object_if_present(
-            &mut settings,
-            &settings_path,
-            "claude settings",
-            "claude settings hooks",
-        )? {
-            updated_settings |=
-                remove_hook_commands(hooks, "SessionStart", &hook_path, Some("idle"))?;
-            updated_settings |=
-                remove_hook_commands(hooks, "SessionStart", &hook_path, Some("session"))?;
-            updated_settings |=
-                remove_hook_commands(hooks, "UserPromptSubmit", &hook_path, Some("working"))?;
-            updated_settings |=
-                remove_hook_commands(hooks, "PreToolUse", &hook_path, Some("working"))?;
-            updated_settings |=
-                remove_hook_commands(hooks, "PermissionRequest", &hook_path, Some("blocked"))?;
-            updated_settings |=
-                remove_hook_commands(hooks, "PostToolUse", &hook_path, Some("working"))?;
-            updated_settings |=
-                remove_hook_commands(hooks, "PostToolUseFailure", &hook_path, Some("working"))?;
-            updated_settings |=
-                remove_hook_commands(hooks, "SubagentStop", &hook_path, Some("working"))?;
-            updated_settings |= remove_hook_commands(hooks, "Stop", &hook_path, Some("idle"))?;
-            updated_settings |=
-                remove_hook_commands(hooks, "SessionEnd", &hook_path, Some("release"))?;
-        }
-
+        let existing_settings = fs::read_to_string(&settings_path)?;
+        let new_settings =
+            uninstall_claude_settings(&existing_settings, &settings_path, &hook_path)?;
+        updated_settings = new_settings != existing_settings;
         if updated_settings {
-            fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
+            fs::write(&settings_path, new_settings)?;
         }
     }
 
@@ -1002,8 +950,7 @@ pub(crate) fn install_cursor() -> io::Result<CursorInstallPaths> {
         "cursor hooks file",
         "cursor hooks file hooks",
     )?;
-    let quoted_hook_path = shell_single_quote(&hook_path.display().to_string());
-    let session_command = format!("bash {quoted_hook_path} session");
+    let session_command = hook_command(&hook_path, Some("session"));
     remove_simple_command_hook(hooks, "beforeSubmitPrompt", &session_command)?;
     remove_simple_command_hook(hooks, "beforeShellExecution", &session_command)?;
     remove_simple_command_hook(hooks, "beforeMCPExecution", &session_command)?;
@@ -1083,8 +1030,7 @@ pub(crate) fn uninstall_cursor() -> io::Result<CursorUninstallResult> {
             "cursor hooks file",
             "cursor hooks file hooks",
         )? {
-            let quoted_hook_path = shell_single_quote(&hook_path.display().to_string());
-            let session_command = format!("bash {quoted_hook_path} session");
+            let session_command = hook_command(&hook_path, Some("session"));
             updated_hooks |= remove_simple_command_hook(hooks, "sessionStart", &session_command)?;
             updated_hooks |=
                 remove_simple_command_hook(hooks, "beforeSubmitPrompt", &session_command)?;
@@ -1109,6 +1055,26 @@ pub(crate) fn uninstall_cursor() -> io::Result<CursorUninstallResult> {
         removed_hook_file,
         updated_hooks,
     })
+}
+
+pub(crate) fn mastracode_hook_command(hook_path: &Path, action: &str) -> String {
+    #[cfg(windows)]
+    {
+        use base64::Engine;
+
+        let path = hook_path.display().to_string().replace('\'', "''");
+        let script = format!("& '{path}' {action}");
+        let encoded_script = script
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(encoded_script);
+        format!("powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}")
+    }
+    #[cfg(not(windows))]
+    {
+        hook_command(hook_path, Some(action))
+    }
 }
 
 pub(crate) fn install_mastracode() -> io::Result<MastracodeInstallPaths> {
@@ -1136,15 +1102,16 @@ pub(crate) fn install_mastracode() -> io::Result<MastracodeInstallPaths> {
         ))
     })?;
 
-    let quoted_hook_path = shell_single_quote(&hook_path.display().to_string());
     for (event, action) in MASTRACODE_REMOVED_HOOK_EVENTS {
-        remove_flat_command_hook(hooks, event, &format!("bash {quoted_hook_path} {action}"))?;
+        remove_flat_command_hook(hooks, event, &hook_command(&hook_path, Some(action)))?;
+        remove_flat_command_hook(hooks, event, &mastracode_hook_command(&hook_path, action))?;
     }
     for (event, action) in MASTRACODE_HOOK_EVENTS {
+        remove_flat_command_hook(hooks, event, &hook_command(&hook_path, Some(action)))?;
         ensure_flat_command_hook(
             hooks,
             event,
-            format!("bash {quoted_hook_path} {action}"),
+            mastracode_hook_command(&hook_path, action),
             MASTRACODE_HOOK_TIMEOUT_MS,
         )?;
     }
@@ -1177,15 +1144,16 @@ pub(crate) fn uninstall_mastracode() -> io::Result<MastracodeUninstallResult> {
             ))
         })?;
 
-        let quoted_hook_path = shell_single_quote(&hook_path.display().to_string());
         for (event, action) in MASTRACODE_HOOK_EVENTS
             .into_iter()
             .chain(MASTRACODE_REMOVED_HOOK_EVENTS)
         {
+            updated_hooks |=
+                remove_flat_command_hook(hooks, event, &hook_command(&hook_path, Some(action)))?;
             updated_hooks |= remove_flat_command_hook(
                 hooks,
                 event,
-                &format!("bash {quoted_hook_path} {action}"),
+                &mastracode_hook_command(&hook_path, action),
             )?;
         }
 
@@ -1306,9 +1274,22 @@ pub(crate) fn uninstall_antigravity_cli() -> io::Result<AntigravityCliUninstallR
 
 /// The complete Herdr-owned Grok hook config. Installation and status share
 /// this value so any config drift is reported as outdated.
+fn grok_hook_command(hook_path: &Path) -> String {
+    #[cfg(windows)]
+    {
+        hook_command(hook_path, Some("session"))
+    }
+    #[cfg(not(windows))]
+    {
+        format!(
+            "sh {} session",
+            shell_single_quote(&hook_path.display().to_string())
+        )
+    }
+}
+
 pub(crate) fn grok_hook_config(hook_path: &Path) -> Value {
-    let quoted_hook_path = shell_single_quote(&hook_path.display().to_string());
-    let session_command = format!("sh {quoted_hook_path} session");
+    let session_command = grok_hook_command(hook_path);
     json!({
         "hooks": {
             "SessionStart": [

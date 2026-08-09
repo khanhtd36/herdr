@@ -233,6 +233,8 @@ impl App {
                 changes_view
             }
             crate::raw_input::RawInputEvent::OuterFocusGained => {
+                #[cfg(not(windows))]
+                self.query_host_terminal_appearance();
                 self.send_outer_focus_event(crate::ghostty::FocusEvent::Gained);
                 if self.state.redraw_on_focus_gained {
                     self.request_repaint();
@@ -257,6 +259,8 @@ impl App {
                 self.query_host_terminal_theme();
                 self.set_host_terminal_appearance(appearance, true)
             }
+            // Cell size reports are consumed by the thin client, not the runtime.
+            crate::raw_input::RawInputEvent::HostCellSizeReport { .. } => false,
             crate::raw_input::RawInputEvent::Unsupported => false,
         };
         self.sync_prefix_input_source(previous_mode);

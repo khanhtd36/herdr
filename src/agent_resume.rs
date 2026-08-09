@@ -207,7 +207,12 @@ pub fn plan(
         }
         ("herdr:cursor", "cursor", AgentSessionRefKind::Id) => {
             vec![
-                "cursor-agent".into(),
+                if cfg!(windows) {
+                    "cursor-agent.cmd"
+                } else {
+                    "cursor-agent"
+                }
+                .into(),
                 "--resume".into(),
                 session_ref.value.clone(),
             ]
@@ -462,13 +467,22 @@ mod tests {
             )
             .unwrap()
             .argv,
-            vec!["cursor-agent", "--resume", "cursor-session"]
+            vec![
+                if cfg!(windows) {
+                    "cursor-agent.cmd"
+                } else {
+                    "cursor-agent"
+                },
+                "--resume",
+                "cursor-session",
+            ]
         );
         assert_eq!(
             plan(
                 "herdr:antigravity_cli",
                 "agy",
-                &AgentSessionRef::id("agy-session").unwrap()
+                &AgentSessionRef::id("agy-session").unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
@@ -478,7 +492,8 @@ mod tests {
             plan(
                 "herdr:grok",
                 "grok",
-                &AgentSessionRef::id("grok-session").unwrap()
+                &AgentSessionRef::id("grok-session").unwrap(),
+                &HashMap::new()
             )
             .unwrap()
             .argv,
@@ -849,7 +864,8 @@ mod tests {
         assert!(plan(
             "herdr:antigravity_cli",
             "agy",
-            &AgentSessionRef::path(&agy_session).unwrap()
+            &AgentSessionRef::path(&agy_session).unwrap(),
+            &HashMap::new()
         )
         .is_none());
     }
