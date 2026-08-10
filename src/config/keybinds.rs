@@ -2090,16 +2090,16 @@ switch_tab = "prefix+?"
         );
         assert_eq!(
             binding_triggers(&kb.move_tab_left),
-            vec![BindingTrigger::Direct((
+            vec![BindingTrigger::Prefix((
                 KeyCode::Char('{'),
-                KeyModifiers::CONTROL
+                KeyModifiers::empty()
             ))]
         );
         assert_eq!(
             binding_triggers(&kb.move_tab_right),
-            vec![BindingTrigger::Direct((
+            vec![BindingTrigger::Prefix((
                 KeyCode::Char('}'),
-                KeyModifiers::CONTROL
+                KeyModifiers::empty()
             ))]
         );
         assert_eq!(kb.switch_tab.len(), 9);

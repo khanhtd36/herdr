@@ -441,9 +441,9 @@ pub struct KeysConfig {
     pub previous_tab: BindingConfig,
     /// Select the next tab. Default: "prefix+n".
     pub next_tab: BindingConfig,
-    /// Move the active tab one position to the left. Default: "ctrl+{".
+    /// Move the active tab one position to the left. Default: "prefix+{".
     pub move_tab_left: BindingConfig,
-    /// Move the active tab one position to the right. Default: "ctrl+}".
+    /// Move the active tab one position to the right. Default: "prefix+}".
     pub move_tab_right: BindingConfig,
     /// Switch to tab 1-9. Default: "prefix+1..9".
     pub switch_tab: BindingConfig,
@@ -1055,8 +1055,8 @@ impl Default for KeysConfig {
             rename_tab: BindingConfig::one("prefix+shift+t"),
             previous_tab: BindingConfig::one("prefix+p"),
             next_tab: BindingConfig::one("prefix+n"),
-            move_tab_left: BindingConfig::one("ctrl+{"),
-            move_tab_right: BindingConfig::one("ctrl+}"),
+            move_tab_left: BindingConfig::one("prefix+{"),
+            move_tab_right: BindingConfig::one("prefix+}"),
             switch_tab: BindingConfig::one("prefix+1..9"),
             switch_workspace: BindingConfig::empty(),
             close_tab: BindingConfig::one("prefix+shift+x"),
