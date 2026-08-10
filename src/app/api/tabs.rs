@@ -98,6 +98,7 @@ impl App {
                 self.state.remove_alias_shadowed_by_new_pane(
                     self.state.workspaces[ws_idx].tabs[tab_idx].root_pane,
                 );
+                self.apply_default_tab_split(ws_idx, tab_idx);
                 if let Some(label) = label {
                     let workspace_id = self.state.workspaces[ws_idx].id.clone();
                     let tab_id = self.public_tab_id(ws_idx, tab_idx).unwrap_or_else(|| {
@@ -495,6 +496,57 @@ mod tests {
             crate::worktree::canonical_or_original(created_cwd),
             crate::worktree::canonical_or_original(&cached_cwd)
         );
+        shutdown_test_runtimes(&mut app);
+    }
+
+    #[tokio::test]
+    async fn tab_create_applies_configured_default_split() {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(&Config::default(), true, None, api_rx, event_hub.clone());
+        app.state.default_shell = exiting_test_command().into();
+        app.state.shell_mode = ShellModeConfig::NonLogin;
+        app.state.default_tab_split = Some(ratatui::layout::Direction::Horizontal);
+        app.state.workspaces = vec![Workspace::test_new("tabs")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.ensure_test_terminals();
+
+        let response = app.handle_tab_create(
+            "req".into(),
+            TabCreateParams {
+                workspace_id: None,
+                cwd: None,
+                focus: false,
+                label: None,
+                env: Default::default(),
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert!(matches!(success.result, ResponseResult::TabCreated { .. }));
+        let created = &app.state.workspaces[0].tabs[1];
+        assert_eq!(created.layout.pane_count(), 2);
+        assert_eq!(created.layout.focused(), created.root_pane);
+        let split_pane_id = created
+            .layout
+            .pane_ids()
+            .into_iter()
+            .find(|id| *id != created.root_pane)
+            .unwrap();
+        let events = event_hub.events_after(0);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(_, event)| event.event == EventKind::PaneCreated)
+                .count(),
+            2,
+            "expected PaneCreated for both the tab's root pane and the default-split pane"
+        );
+        assert!(events.iter().any(|(_, event)| matches!(
+            &event.data,
+            EventData::PaneCreated { pane } if pane.pane_id == app.public_pane_id(0, split_pane_id).unwrap()
+        )));
         shutdown_test_runtimes(&mut app);
     }
 }

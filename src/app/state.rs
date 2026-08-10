@@ -1530,6 +1530,10 @@ pub struct AppState {
     pub shell_mode: crate::config::ShellModeConfig,
     pub new_terminal_cwd: NewTerminalCwdConfig,
     pub pane_scrollback_limit_bytes: usize,
+    /// Split applied to a freshly created tab's starting pane. `None` keeps
+    /// today's single-pane behavior. Does not apply to session restore or
+    /// explicit layout application.
+    pub default_tab_split: Option<Direction>,
     #[allow(dead_code)] // kept for backward compat; palette.accent is the source of truth
     pub accent: Color,
     pub sound: SoundConfig,
@@ -1891,6 +1895,7 @@ impl AppState {
             shell_mode: crate::config::ShellModeConfig::Auto,
             new_terminal_cwd: NewTerminalCwdConfig::Follow,
             pane_scrollback_limit_bytes: crate::config::DEFAULT_SCROLLBACK_LIMIT_BYTES,
+            default_tab_split: None,
             accent: Color::Cyan,
             sound: SoundConfig {
                 enabled: false,

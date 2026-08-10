@@ -49,7 +49,7 @@ use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     execute, terminal,
 };
-use ratatui::layout::Rect;
+use ratatui::layout::{Direction, Rect};
 use ratatui::DefaultTerminal;
 use tokio::sync::{mpsc, Notify};
 use tracing::info;
@@ -671,6 +671,12 @@ impl App {
             shell_mode: config.terminal.shell_mode,
             new_terminal_cwd: config.terminal.new_cwd.clone(),
             pane_scrollback_limit_bytes: config.advanced.scrollback_limit_bytes,
+            default_tab_split: match config.tab.default_split {
+                crate::config::DefaultSplitConfig::None => None,
+                // "vertical" = side-by-side, same mapping as the split_vertical keybind.
+                crate::config::DefaultSplitConfig::Vertical => Some(Direction::Horizontal),
+                crate::config::DefaultSplitConfig::Horizontal => Some(Direction::Vertical),
+            },
             accent: crate::config::parse_color(&config.ui.accent),
             sound: config.ui.sound.clone(),
             local_sound_playback: true,

@@ -148,6 +148,12 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # "current" for Herdr's process directory, or a fixed path such as "~/Projects".
 # new_cwd = "follow"
 
+[tab]
+# Split applied to a new tab's starting pane: "none", "vertical" (side-by-side),
+# or "horizontal" (stacked). Applies to tabs created via keybind, CLI, or API.
+# Does not apply to session restore or explicit layout application.
+# default_split = "none"
+
 [update]
 # Update channel used by background version checks and `herdr update`.
 # Defaults to "stable" on Linux/macOS and "preview" on Windows.
