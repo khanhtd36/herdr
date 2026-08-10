@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `keys.move_tab_left` and `keys.move_tab_right` reorder the active tab within its workspace, bound to `prefix+{` and `prefix+}` by default.
 - Devin CLI, Cursor Agent CLI, MastraCode, Hermes Agent, and Grok CLI integrations now install and run natively on Windows.
 - `theme.custom.sidebar_bg` can now give the desktop sidebar its own background without changing built-in theme defaults.
 - Settings and `ui.status_indicators = "symbols"` can now use distinct static shapes for blocked, working, done, idle, and unknown agent states. (#2260)

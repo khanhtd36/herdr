@@ -325,6 +325,25 @@ impl App {
                     leave_navigate_mode(&mut self.state);
                 }
             }
+            NavigateAction::MoveTabLeft => {
+                if let Some(ws_idx) = self.state.active {
+                    let tab_idx = self.state.workspaces[ws_idx].active_tab;
+                    if tab_idx > 0 {
+                        self.move_tab_via_api(ws_idx, tab_idx, tab_idx - 1);
+                    }
+                }
+                leave_navigate_mode(&mut self.state);
+            }
+            NavigateAction::MoveTabRight => {
+                if let Some(ws_idx) = self.state.active {
+                    let tabs_len = self.state.workspaces[ws_idx].tabs.len();
+                    let tab_idx = self.state.workspaces[ws_idx].active_tab;
+                    if tab_idx + 1 < tabs_len {
+                        self.move_tab_via_api(ws_idx, tab_idx, tab_idx + 2);
+                    }
+                }
+                leave_navigate_mode(&mut self.state);
+            }
             NavigateAction::RenamePane => {
                 if let Some(pane_id) = self
                     .state
@@ -1350,6 +1369,8 @@ pub(crate) enum NavigateAction {
     PreviousTab,
     NextTab,
     CloseTab,
+    MoveTabLeft,
+    MoveTabRight,
     RenamePane,
     FocusPaneLeft,
     FocusPaneDown,
@@ -1491,6 +1512,8 @@ fn non_indexed_action_for_key(
         (&kb.previous_tab, NavigateAction::PreviousTab),
         (&kb.next_tab, NavigateAction::NextTab),
         (&kb.close_tab, NavigateAction::CloseTab),
+        (&kb.move_tab_left, NavigateAction::MoveTabLeft),
+        (&kb.move_tab_right, NavigateAction::MoveTabRight),
         (&kb.rename_pane, NavigateAction::RenamePane),
         (&kb.edit_scrollback, NavigateAction::EditScrollback),
         (&kb.copy_mode, NavigateAction::CopyMode),
@@ -1691,6 +1714,14 @@ pub(super) fn execute_navigate_action_in_context(
             if !state.close_tab() {
                 leave_navigate_mode(state);
             }
+        }
+        NavigateAction::MoveTabLeft => {
+            state.move_tab_left();
+            leave_navigate_mode(state);
+        }
+        NavigateAction::MoveTabRight => {
+            state.move_tab_right();
+            leave_navigate_mode(state);
         }
         NavigateAction::RenamePane => {
             if let Some(pane_id) = state
@@ -3483,6 +3514,70 @@ navigate_pane_down = "ctrl+j"
 
         assert!(state.workspaces[0].zoomed);
         assert_eq!(state.workspaces[0].focused_pane_id(), Some(right));
+    }
+
+    #[test]
+    fn move_tab_left_action_reorders_active_tab() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.workspaces[0].tabs[0].custom_name = Some("first".to_string());
+        state.workspaces[0].test_add_tab(Some("second"));
+        state.workspaces[0].active_tab = 1;
+
+        execute_navigate_action(&mut state, NavigateAction::MoveTabLeft);
+
+        assert_eq!(state.workspaces[0].active_tab, 0);
+        assert_eq!(
+            state.workspaces[0].tabs[0].custom_name.as_deref(),
+            Some("second")
+        );
+    }
+
+    #[test]
+    fn move_tab_left_action_is_noop_at_first_position() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.workspaces[0].tabs[0].custom_name = Some("first".to_string());
+        state.workspaces[0].test_add_tab(Some("second"));
+        state.workspaces[0].active_tab = 0;
+
+        execute_navigate_action(&mut state, NavigateAction::MoveTabLeft);
+
+        assert_eq!(state.workspaces[0].active_tab, 0);
+        assert_eq!(
+            state.workspaces[0].tabs[0].custom_name.as_deref(),
+            Some("first")
+        );
+    }
+
+    #[test]
+    fn move_tab_right_action_reorders_active_tab() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.workspaces[0].tabs[0].custom_name = Some("first".to_string());
+        state.workspaces[0].test_add_tab(Some("second"));
+        state.workspaces[0].active_tab = 0;
+
+        execute_navigate_action(&mut state, NavigateAction::MoveTabRight);
+
+        assert_eq!(state.workspaces[0].active_tab, 1);
+        assert_eq!(
+            state.workspaces[0].tabs[1].custom_name.as_deref(),
+            Some("first")
+        );
+    }
+
+    #[test]
+    fn move_tab_right_action_is_noop_at_last_position() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.workspaces[0].tabs[0].custom_name = Some("first".to_string());
+        state.workspaces[0].test_add_tab(Some("second"));
+        state.workspaces[0].active_tab = 1;
+
+        execute_navigate_action(&mut state, NavigateAction::MoveTabRight);
+
+        assert_eq!(state.workspaces[0].active_tab, 1);
+        assert_eq!(
+            state.workspaces[0].tabs[1].custom_name.as_deref(),
+            Some("second")
+        );
     }
 
     #[test]

@@ -410,6 +410,18 @@
           "description": "Close the active tab."
         },
         {
+          "key": "keys.move_tab_left",
+          "type": "keybinding",
+          "default": "\"prefix+{\"",
+          "description": "Move the active tab one position to the left."
+        },
+        {
+          "key": "keys.move_tab_right",
+          "type": "keybinding",
+          "default": "\"prefix+}\"",
+          "description": "Move the active tab one position to the right."
+        },
+        {
           "key": "keys.rename_pane",
           "type": "keybinding",
           "default": "\"prefix+shift+p\"",
