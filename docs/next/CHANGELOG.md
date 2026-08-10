@@ -7,6 +7,7 @@
 - `theme.custom.sidebar_bg` can now give the desktop sidebar its own background without changing built-in theme defaults.
 - Settings and `ui.status_indicators = "symbols"` can now use distinct static shapes for blocked, working, done, idle, and unknown agent states. (#2260)
 - The plugin marketplace now discovers valid manifests at repository roots and subdirectories, groups multiple plugins under each repository, and publishes their versions and exact default-branch commits.
+- `tab.default_split = "vertical"` or `"horizontal"` now splits every freshly created tab's starting pane automatically.
 
 ### Changed
 - Bumped the client/server protocol version to 20 for pane terminal bell forwarding.

@@ -257,6 +257,27 @@ pub enum ShellModeConfig {
     NonLogin,
 }
 
+/// Split applied to a tab's single starting pane right after creation.
+/// "vertical" = side-by-side panes, "horizontal" = stacked panes (same
+/// terminology as the `split_vertical`/`split_horizontal` keybindings).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DefaultSplitConfig {
+    #[default]
+    None,
+    Vertical,
+    Horizontal,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct TabConfig {
+    /// Default split applied when a new tab is created (keybind, CLI, or API).
+    /// Does not apply when restoring a saved session or an explicit layout.
+    /// Default: "none" (single pane, today's behavior).
+    pub default_split: DefaultSplitConfig,
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct TerminalConfig {
@@ -344,6 +365,7 @@ pub struct Config {
     pub update: UpdateConfig,
     pub keys: KeysConfig,
     pub ui: UiConfig,
+    pub tab: TabConfig,
     pub worktrees: WorktreesConfig,
     pub advanced: AdvancedConfig,
     pub experimental: ExperimentalConfig,

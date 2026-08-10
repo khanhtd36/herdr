@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use crate::api::schema::{EventData, EventEnvelope, EventKind};
-#[cfg(test)]
 use tracing::error;
 
 use super::{
@@ -235,6 +234,72 @@ impl App {
         let ws_idx = self.create_workspace_with_options(initial_cwd, focus)?;
         self.emit_workspace_open_events(ws_idx);
         Ok(())
+    }
+
+    /// Apply the configured default tab split to a freshly created tab's
+    /// single starting pane. No-op when no default split is configured.
+    /// Callers are fresh tab/workspace creation only — session restore and
+    /// explicit layout application must not call this.
+    pub(super) fn apply_default_tab_split(&mut self, ws_idx: usize, tab_idx: usize) {
+        let Some(direction) = self.state.default_tab_split else {
+            return;
+        };
+        let Some(root_pane) = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.tabs.get(tab_idx))
+            .map(|tab| tab.root_pane)
+        else {
+            return;
+        };
+        let (rows, cols) = self.state.estimate_pane_size();
+        let cwd = self.launch_cwd_for_pane_in_workspace(ws_idx, root_pane);
+        let scrollback_limit_bytes = self.state.pane_scrollback_limit_bytes;
+        let host_terminal_theme = self.state.host_terminal_theme;
+        let host_terminal_appearance = self.state.host_terminal_appearance;
+        let shell_config =
+            crate::pane::PaneShellConfig::new(&self.state.default_shell, self.state.shell_mode);
+        let Some(ws) = self.state.workspaces.get_mut(ws_idx) else {
+            return;
+        };
+        let result = ws.split_pane(
+            root_pane,
+            direction,
+            rows,
+            cols,
+            cwd,
+            scrollback_limit_bytes,
+            host_terminal_theme,
+            host_terminal_appearance,
+            shell_config,
+            Vec::new(),
+            false, // keep the first pane focused
+        );
+        match result {
+            Some(Ok((_, new_pane))) => {
+                let new_pane_id = new_pane.pane_id;
+                self.terminal_runtimes
+                    .insert(new_pane.terminal.id.clone(), new_pane.runtime);
+                self.state.remove_alias_shadowed_by_new_pane(new_pane_id);
+                self.state
+                    .terminals
+                    .insert(new_pane.terminal.id.clone(), new_pane.terminal);
+                // Caller's own emit_*_created_events only reports the tab's root
+                // pane; the split pane needs its own PaneCreated so API/event
+                // clients see it (LayoutUpdated alone doesn't announce it).
+                if let Some(pane) = self.pane_info(ws_idx, new_pane_id) {
+                    self.emit_event(EventEnvelope {
+                        event: EventKind::PaneCreated,
+                        data: EventData::PaneCreated { pane },
+                    });
+                }
+            }
+            Some(Err(err)) => {
+                error!(err = %err, "failed to apply default tab split");
+            }
+            None => {}
+        }
     }
 
     pub(crate) fn create_workspace_with_launch_env(

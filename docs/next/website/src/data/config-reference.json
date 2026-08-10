@@ -180,6 +180,23 @@
       ]
     },
     {
+      "id": "tab",
+      "title": "Tabs",
+      "keys": [
+        {
+          "key": "tab.default_split",
+          "type": "enum",
+          "default": "\"none\"",
+          "description": "Split applied to a new tab's starting pane. Applies to tabs created via keybind, CLI, or socket API; does not apply to session restore or explicit layout application.",
+          "values": [
+            "none",
+            "vertical",
+            "horizontal"
+          ]
+        }
+      ]
+    },
+    {
       "id": "update",
       "title": "Updates",
       "keys": [

@@ -79,6 +79,17 @@ new_cwd = "follow"
 
 `new_cwd = "follow"` keeps the default behavior and inherits the source pane or workspace. When there is no source workspace, Herdr starts in `$HOME`. Use `"home"` to always start in `$HOME`, `"current"` to use Herdr's process directory, or a fixed path such as `"~/Projects"`. Explicit `--cwd` values from the CLI or socket API still take precedence.
 
+## Tab defaults
+
+Split a new tab's starting pane automatically:
+
+```toml
+[tab]
+default_split = "vertical"
+```
+
+`default_split = "vertical"` gives every new tab two side-by-side panes; `"horizontal"` stacks them instead. Default is `"none"` (a single pane, matching prior behavior). This applies whenever a tab is created fresh — keybind, CLI, or socket API — and does not apply when restoring a saved session or applying an explicit layout.
+
 ## Worktrees
 
 Set the root directory Herdr uses for Git worktree checkouts created from the sidebar:
