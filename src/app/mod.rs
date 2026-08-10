@@ -1560,6 +1560,15 @@ impl App {
             self.state.new_terminal_cwd = config.terminal.new_cwd.clone();
         }
 
+        if !invalid_section("tab") {
+            self.state.default_tab_split = match config.tab.default_split {
+                crate::config::DefaultSplitConfig::None => None,
+                // "vertical" = side-by-side, same mapping as the split_vertical keybind.
+                crate::config::DefaultSplitConfig::Vertical => Some(Direction::Horizontal),
+                crate::config::DefaultSplitConfig::Horizontal => Some(Direction::Vertical),
+            };
+        }
+
         if !invalid_section("worktrees") {
             self.state.worktree_directory =
                 crate::worktree::expand_tilde_absolute_path(&config.worktrees.directory);
@@ -3484,6 +3493,27 @@ mod tests {
             app.state.toast_config.delivery,
             crate::config::ToastDelivery::Terminal
         );
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn reload_config_applies_default_tab_split() {
+        let _guard = config_env_lock().lock().unwrap();
+        let path = temp_config_path("reload-config-default-tab-split");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "onboarding = false\n").unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+        let mut app = test_app();
+        assert_eq!(app.state.default_tab_split, None);
+
+        std::fs::write(&path, "[tab]\ndefault_split = \"vertical\"\n").unwrap();
+        let report = app.reload_config();
+
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Applied);
+        assert_eq!(app.state.default_tab_split, Some(Direction::Horizontal));
+
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
