@@ -1499,6 +1499,36 @@ impl AppState {
     }
 
     #[cfg(test)]
+    pub fn move_tab_left(&mut self) {
+        self.move_active_tab(-1);
+    }
+
+    #[cfg(test)]
+    pub fn move_tab_right(&mut self) {
+        self.move_active_tab(1);
+    }
+
+    #[cfg(test)]
+    fn move_active_tab(&mut self, delta: isize) {
+        let Some(ws) = self.active.and_then(|i| self.workspaces.get_mut(i)) else {
+            return;
+        };
+        let active_idx = ws.active_tab_index();
+        let tab_count = ws.tabs.len();
+        let insert_idx = if delta < 0 {
+            match active_idx.checked_sub(1) {
+                Some(idx) => idx,
+                None => return,
+            }
+        } else if active_idx + 1 >= tab_count {
+            return;
+        } else {
+            active_idx + 2
+        };
+        ws.move_tab(active_idx, insert_idx);
+    }
+
+    #[cfg(test)]
     pub fn next_agent(&mut self) {
         self.cycle_agent_entry(true);
     }

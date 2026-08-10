@@ -43,6 +43,23 @@ pub(crate) fn terminal_direct_indexed_navigation_action(
     indexed_navigation_action(state, key, BindingDispatch::Direct)
 }
 
+/// Computes the `insert_index` to pass to `Workspace::move_tab` for a
+/// one-position keyboard move of the tab at `active_idx`, or `None` when
+/// `active_idx` is already at the edge in that direction (clamp, no wrap).
+fn move_tab_insert_index(active_idx: usize, tab_count: usize, delta: isize) -> Option<usize> {
+    if delta < 0 {
+        active_idx.checked_sub(1)
+    } else if delta > 0 {
+        if active_idx + 1 >= tab_count {
+            None
+        } else {
+            Some(active_idx + 2)
+        }
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ActionContext {
     Direct,
@@ -319,6 +336,14 @@ impl App {
                     self.focus_tab_idx_via_api(tab_idx);
                     leave_navigate_mode(&mut self.state);
                 }
+            }
+            NavigateAction::MoveTabLeft => {
+                self.move_active_tab_via_api(-1);
+                leave_navigate_mode(&mut self.state);
+            }
+            NavigateAction::MoveTabRight => {
+                self.move_active_tab_via_api(1);
+                leave_navigate_mode(&mut self.state);
             }
             NavigateAction::CloseTab => {
                 if !self.close_active_tab_via_api_requires_confirmation() {
@@ -730,6 +755,20 @@ impl App {
             return None;
         }
         Some((ws.active_tab as isize + delta).rem_euclid(ws.tabs.len() as isize) as usize)
+    }
+
+    fn move_active_tab_via_api(&mut self, delta: isize) {
+        let Some(ws_idx) = self.state.active else {
+            return;
+        };
+        let Some(ws) = self.state.workspaces.get(ws_idx) else {
+            return;
+        };
+        let Some(insert_idx) = move_tab_insert_index(ws.active_tab_index(), ws.tabs.len(), delta)
+        else {
+            return;
+        };
+        self.move_tab_via_api(ws_idx, ws.active_tab_index(), insert_idx);
     }
 
     fn agent_entry_target(&self, idx: usize) -> Option<(usize, crate::layout::PaneId)> {
@@ -1349,6 +1388,8 @@ pub(crate) enum NavigateAction {
     RenameTab,
     PreviousTab,
     NextTab,
+    MoveTabLeft,
+    MoveTabRight,
     CloseTab,
     RenamePane,
     FocusPaneLeft,
@@ -1390,6 +1431,8 @@ fn copy_mode_survives_prefix_action(action: NavigateAction) -> bool {
             | NavigateAction::NextAgent
             | NavigateAction::PreviousTab
             | NavigateAction::NextTab
+            | NavigateAction::MoveTabLeft
+            | NavigateAction::MoveTabRight
             | NavigateAction::FocusPaneLeft
             | NavigateAction::FocusPaneDown
             | NavigateAction::FocusPaneUp
@@ -1490,6 +1533,8 @@ fn non_indexed_action_for_key(
         (&kb.rename_tab, NavigateAction::RenameTab),
         (&kb.previous_tab, NavigateAction::PreviousTab),
         (&kb.next_tab, NavigateAction::NextTab),
+        (&kb.move_tab_left, NavigateAction::MoveTabLeft),
+        (&kb.move_tab_right, NavigateAction::MoveTabRight),
         (&kb.close_tab, NavigateAction::CloseTab),
         (&kb.rename_pane, NavigateAction::RenamePane),
         (&kb.edit_scrollback, NavigateAction::EditScrollback),
@@ -1685,6 +1730,14 @@ pub(super) fn execute_navigate_action_in_context(
         }
         NavigateAction::NextTab => {
             state.next_tab();
+            leave_navigate_mode(state);
+        }
+        NavigateAction::MoveTabLeft => {
+            state.move_tab_left();
+            leave_navigate_mode(state);
+        }
+        NavigateAction::MoveTabRight => {
+            state.move_tab_right();
             leave_navigate_mode(state);
         }
         NavigateAction::CloseTab => {
@@ -3215,6 +3268,52 @@ navigate_pane_down = "ctrl+j"
         assert_eq!(app.state.selected, 0);
         assert_eq!(app.state.mode, Mode::ConfirmClose);
         assert_eq!(app.state.workspaces.len(), 2);
+    }
+
+    #[test]
+    fn tui_move_tab_left_and_right_reorder_active_tab_via_api() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        app.state.workspaces[0].test_add_tab(Some("two"));
+        app.state.workspaces[0].test_add_tab(Some("three"));
+        app.state.workspaces[0].active_tab = 1;
+        let moved_root = app.state.workspaces[0].tabs[1].root_pane;
+        app.state.mode = Mode::Navigate;
+
+        app.execute_tui_navigate_action(NavigateAction::MoveTabRight, ActionContext::Navigate);
+        assert_eq!(app.state.workspaces[0].tabs[2].root_pane, moved_root);
+        assert_eq!(app.state.workspaces[0].active_tab, 2);
+        assert_eq!(app.state.mode, Mode::Terminal);
+
+        app.execute_tui_navigate_action(NavigateAction::MoveTabLeft, ActionContext::Navigate);
+        assert_eq!(app.state.workspaces[0].tabs[1].root_pane, moved_root);
+        assert_eq!(app.state.workspaces[0].active_tab, 1);
+    }
+
+    #[test]
+    fn tui_move_tab_at_edge_is_a_no_op() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        app.state.workspaces[0].test_add_tab(Some("two"));
+        let first_root = app.state.workspaces[0].tabs[0].root_pane;
+        let last_root = app.state.workspaces[0].tabs[1].root_pane;
+        app.state.workspaces[0].active_tab = 0;
+        app.state.mode = Mode::Navigate;
+
+        app.execute_tui_navigate_action(NavigateAction::MoveTabLeft, ActionContext::Navigate);
+        assert_eq!(app.state.workspaces[0].tabs[0].root_pane, first_root);
+        assert_eq!(app.state.workspaces[0].tabs[1].root_pane, last_root);
+
+        app.state.workspaces[0].active_tab = 1;
+        app.execute_tui_navigate_action(NavigateAction::MoveTabRight, ActionContext::Navigate);
+        assert_eq!(app.state.workspaces[0].tabs[0].root_pane, first_root);
+        assert_eq!(app.state.workspaces[0].tabs[1].root_pane, last_root);
+    }
+
+    #[test]
+    fn move_tab_insert_index_clamps_at_edges_and_targets_neighbor() {
+        assert_eq!(move_tab_insert_index(0, 3, -1), None);
+        assert_eq!(move_tab_insert_index(1, 3, -1), Some(0));
+        assert_eq!(move_tab_insert_index(2, 3, 1), None);
+        assert_eq!(move_tab_insert_index(1, 3, 1), Some(3));
     }
 
     #[cfg(unix)]

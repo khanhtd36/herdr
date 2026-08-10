@@ -1566,6 +1566,7 @@ mod tests {
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
             true,
+            &HashMap::new(),
             events,
             Arc::new(Notify::new()),
             Arc::new(RenderSignal::new()),
