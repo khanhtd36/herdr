@@ -8,6 +8,7 @@
 - Settings and `ui.status_indicators = "symbols"` can now use distinct static shapes for blocked, working, done, idle, and unknown agent states. (#2260)
 - The plugin marketplace now discovers valid manifests at repository roots and subdirectories, groups multiple plugins under each repository, and publishes their versions and exact default-branch commits.
 - `tab.default_split = "vertical"` or `"horizontal"` now splits every freshly created tab's starting pane automatically.
+- Added `[session] restore_running_commands`, allowing a non-agent pane's foreground command (e.g. a TUI like `lazygit`) to rerun after a Herdr server restart, when the pane was still running that command at shutdown. Off by default.
 
 ### Changed
 - Bumped the client/server protocol version to 20 for pane terminal bell forwarding.

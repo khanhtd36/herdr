@@ -350,6 +350,19 @@ pub fn foreground_process_group_id(child_pid: u32) -> Option<u32> {
     crate::platform::foreground_process_group_id(child_pid)
 }
 
+/// Raw command line of the pane's foreground process, when it is something
+/// other than the pane's own shell (i.e. a command is actively running, not
+/// an idle shell prompt). Used to persist a restorable command for session
+/// snapshots. Returns `None` when the pane is idle at its shell prompt, has
+/// no live runtime, or the command line can't be read.
+pub(crate) fn foreground_command_line(shell_pid: u32) -> Option<String> {
+    let job = foreground_job(shell_pid)?;
+    job.processes
+        .into_iter()
+        .find(|process| process.pid != shell_pid)
+        .and_then(|process| process.cmdline)
+}
+
 fn normalized_process_name(process: &crate::platform::ForegroundProcess) -> String {
     let effective = process.argv0.as_deref().unwrap_or(&process.name);
     let lower_effective = effective.to_lowercase();

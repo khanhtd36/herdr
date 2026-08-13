@@ -32,7 +32,7 @@ This is the strongest persistence path because the original processes never stop
 
 If the Herdr server stops and starts again, the original pane processes are gone. Herdr restores the saved session shape: workspaces, tabs, panes, cwd, layout, and focus.
 
-Snapshot restore does not preserve running shells, servers, tests, or arbitrary processes. Panes that cannot use a stronger restore path come back as new shells in their saved directories.
+Snapshot restore does not preserve running shells, servers, tests, or arbitrary processes. Panes that cannot use a stronger restore path come back as new shells in their saved directories, unless [restoring running commands](#restoring-running-commands) applies.
 
 ## Pane screen history replay
 
@@ -88,6 +88,19 @@ Run `herdr integration status` to check installed integration versions. Reinstal
 Unsupported, missing, invalid, duplicated, or stale session references restore as normal shells in the saved pane directory.
 
 If native agent session restore applies to a pane, Herdr resumes the agent session instead of replaying saved pane history for that pane.
+
+## Restoring running commands
+
+Herdr can rerun a non-agent pane's foreground command (e.g. a TUI like `lazygit`) after a server restart, by feeding the exact command line it last ran into a freshly spawned shell. This is off by default:
+
+```toml
+[session]
+restore_running_commands = true
+```
+
+It only applies when the pane was still running that command — not idle at a shell prompt — at the time of the previous shutdown. Native agent session restore always takes priority: a pane that qualifies for agent resume never falls through to this path. If the rerun fails (missing binary, saved cwd gone), the pane is left at a plain shell prompt.
+
+This is unrelated to live handoff below: a handed-off pane's process never dies, so there is nothing to rerun.
 
 ## Live handoff
 

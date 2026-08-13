@@ -40,6 +40,7 @@ struct RestoreRuntimeContext<'a> {
     shell_config: crate::pane::PaneShellConfig<'a>,
     resume_agents_on_restore: bool,
     agent_resume_command: &'a HashMap<String, String>,
+    restore_running_commands: bool,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
     render_dirty: Arc<RenderSignal>,
@@ -74,6 +75,7 @@ pub fn restore(
     shell_mode: crate::config::ShellModeConfig,
     resume_agents_on_restore: bool,
     agent_resume_command: &HashMap<String, String>,
+    restore_running_commands: bool,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
     render_dirty: Arc<RenderSignal>,
@@ -88,6 +90,7 @@ pub fn restore(
         crate::pane::PaneShellConfig::new(default_shell, shell_mode),
         resume_agents_on_restore,
         agent_resume_command,
+        restore_running_commands,
         &mut imported_panes,
         events,
         render_notify,
@@ -116,6 +119,9 @@ pub fn restore_handoff(
         crate::pane::PaneShellConfig::new(default_shell, shell_mode),
         true,
         agent_resume_command,
+        // Handoff keeps the process alive (fd transfer); there is nothing to
+        // rerun, so this option never applies on the handoff path.
+        false,
         imports,
         events,
         render_notify,
@@ -200,6 +206,7 @@ fn restore_with_imports_strict(
     shell_config: crate::pane::PaneShellConfig<'_>,
     resume_agents_on_restore: bool,
     agent_resume_command: &HashMap<String, String>,
+    restore_running_commands: bool,
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
@@ -214,6 +221,7 @@ fn restore_with_imports_strict(
         shell_config,
         resume_agents_on_restore,
         agent_resume_command,
+        restore_running_commands,
         imported_panes,
         events,
         render_notify,
@@ -242,6 +250,7 @@ fn restore_with_imports(
     shell_config: crate::pane::PaneShellConfig<'_>,
     resume_agents_on_restore: bool,
     agent_resume_command: &HashMap<String, String>,
+    restore_running_commands: bool,
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
@@ -256,6 +265,7 @@ fn restore_with_imports(
         shell_config,
         resume_agents_on_restore,
         agent_resume_command,
+        restore_running_commands,
         imported_panes,
         events,
         render_notify,
@@ -273,6 +283,7 @@ fn restore_with_imports_and_failures(
     shell_config: crate::pane::PaneShellConfig<'_>,
     resume_agents_on_restore: bool,
     agent_resume_command: &HashMap<String, String>,
+    restore_running_commands: bool,
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
@@ -289,6 +300,7 @@ fn restore_with_imports_and_failures(
             shell_config,
             resume_agents_on_restore,
             agent_resume_command,
+            restore_running_commands,
             events: events.clone(),
             render_notify: render_notify.clone(),
             render_dirty: render_dirty.clone(),
@@ -508,6 +520,7 @@ fn restore_tab(
             .and_then(|pane| pane.managed_agent_kind.as_deref())
             .and_then(crate::detect::parse_canonical_agent_label);
         let saved_launch_argv = saved_pane.and_then(|p| p.launch_argv.clone());
+        let saved_foreground_command = saved_pane.and_then(|p| p.foreground_command.clone());
         let saved_agent_session = saved_pane.and_then(|p| p.agent_session.as_ref());
         let saved_history =
             old_id.and_then(|old_id| history.and_then(|history| history.panes.get(old_id)));
@@ -645,6 +658,19 @@ fn restore_tab(
                 if was_imported {
                     if let Some(argv) = saved_launch_argv {
                         terminal = terminal.with_launch_argv(argv).with_respawn_shell_on_exit();
+                    }
+                } else if runtime_context.restore_running_commands {
+                    if let Some(command) = saved_foreground_command.clone() {
+                        let mut line = command.into_bytes();
+                        line.push(b'\n');
+                        if let Err(err) = runtime.try_send_bytes(bytes::Bytes::from(line)) {
+                            warn!(
+                                tab = ?snap.custom_name,
+                                pane_id = id.raw(),
+                                error = %err,
+                                "failed to restore foreground command, pane left at shell prompt"
+                            );
+                        }
                     }
                 }
                 if let Some(label) = saved_label {
@@ -1227,6 +1253,7 @@ mod tests {
                                 value: "opencode-session".into(),
                             }),
                             launch_argv: None,
+                            foreground_command: None,
                         },
                     )]),
                     zoomed: false,
@@ -1253,6 +1280,7 @@ mod tests {
             crate::config::ShellModeConfig::NonLogin,
             false,
             &HashMap::new(),
+            false,
             events,
             Arc::new(Notify::new()),
             Arc::new(RenderSignal::new()),
@@ -1309,6 +1337,7 @@ mod tests {
                                 managed_agent_kind: None,
                                 agent_session: None,
                                 launch_argv: None,
+                                foreground_command: None,
                             },
                         ),
                         (
@@ -1320,6 +1349,7 @@ mod tests {
                                 managed_agent_kind: None,
                                 agent_session: None,
                                 launch_argv: None,
+                                foreground_command: None,
                             },
                         ),
                     ]),
@@ -1347,6 +1377,7 @@ mod tests {
             crate::config::ShellModeConfig::NonLogin,
             false,
             &HashMap::new(),
+            false,
             events,
             Arc::new(Notify::new()),
             Arc::new(RenderSignal::new()),
@@ -1374,6 +1405,7 @@ mod tests {
                     managed_agent_kind: None,
                     agent_session: None,
                     launch_argv: None,
+                    foreground_command: None,
                 },
             )
         };
@@ -1389,6 +1421,7 @@ mod tests {
                 value: "codex-session".into(),
             }),
             launch_argv: None,
+            foreground_command: None,
         };
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
@@ -1455,6 +1488,7 @@ mod tests {
             crate::config::ShellModeConfig::NonLogin,
             false,
             &HashMap::new(),
+            false,
             events,
             Arc::new(Notify::new()),
             Arc::new(RenderSignal::new()),
@@ -1541,6 +1575,7 @@ mod tests {
                                 value: "codex-session".into(),
                             }),
                             launch_argv: None,
+                            foreground_command: None,
                         },
                     )]),
                     zoomed: false,
@@ -1567,6 +1602,7 @@ mod tests {
             crate::config::ShellModeConfig::NonLogin,
             true,
             &HashMap::new(),
+            false,
             events,
             Arc::new(Notify::new()),
             Arc::new(RenderSignal::new()),
@@ -1632,6 +1668,7 @@ mod tests {
             crate::config::ShellModeConfig::NonLogin,
             false,
             &HashMap::new(),
+            false,
             events,
             render_notify,
             render_dirty,
@@ -1671,6 +1708,7 @@ mod tests {
             crate::config::ShellModeConfig::NonLogin,
             false,
             &HashMap::new(),
+            false,
             events,
             render_notify,
             render_dirty,
@@ -1706,6 +1744,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                foreground_command: None,
             },
         );
         let history = SessionHistorySnapshot {
@@ -1754,5 +1793,142 @@ mod tests {
             collapsed_space_keys: Default::default(),
         };
         (snapshot, history)
+    }
+
+    #[cfg(windows)]
+    fn test_interactive_shell() -> &'static str {
+        "cmd.exe"
+    }
+
+    #[cfg(not(windows))]
+    fn test_interactive_shell() -> &'static str {
+        "/bin/sh"
+    }
+
+    fn snapshot_with_foreground_command(foreground_command: Option<&str>) -> SessionSnapshot {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        let mut panes = HashMap::new();
+        panes.insert(
+            0,
+            super::super::snapshot::PaneSnapshot {
+                cwd: cwd.clone(),
+                label: None,
+                agent_name: None,
+                managed_agent_kind: None,
+                agent_session: None,
+                launch_argv: None,
+                foreground_command: foreground_command.map(str::to_string),
+            },
+        );
+        SessionSnapshot {
+            version: super::super::snapshot::SNAPSHOT_VERSION,
+            workspaces: vec![WorkspaceSnapshot {
+                id: Some("workspace".into()),
+                custom_name: None,
+                identity_cwd: cwd,
+                worktree_space: None,
+                public_pane_numbers: HashMap::new(),
+                next_public_pane_number: 0,
+                public_tab_numbers: Vec::new(),
+                next_public_tab_number: 0,
+                tabs: vec![TabSnapshot {
+                    custom_name: None,
+                    layout: LayoutSnapshot::Pane(0),
+                    panes,
+                    zoomed: false,
+                    focused: Some(0),
+                    root_pane: Some(0),
+                }],
+                active_tab: 0,
+            }],
+            active: Some(0),
+            selected: 0,
+            sidebar_width: Some(26),
+            sidebar_section_split: Some(0.5),
+            collapsed_space_keys: Default::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn restore_reruns_foreground_command_when_enabled() {
+        let snapshot = snapshot_with_foreground_command(Some("echo FOREGROUND_RESTORE_MARKER"));
+        let (events, _events_rx) = mpsc::channel(8);
+        let render_notify = Arc::new(Notify::new());
+        let render_dirty = Arc::new(RenderSignal::new());
+
+        let (_workspaces, _terminals, runtimes) = restore(
+            &snapshot,
+            None,
+            24,
+            80,
+            4096,
+            test_interactive_shell(),
+            crate::config::ShellModeConfig::NonLogin,
+            false,
+            &HashMap::new(),
+            true,
+            events,
+            render_notify,
+            render_dirty,
+        );
+        let runtime = runtimes
+            .values()
+            .next()
+            .expect("restored runtime should exist");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !runtime
+            .recent_unwrapped_text(20)
+            .contains("FOREGROUND_RESTORE_MARKER")
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            runtime
+                .recent_unwrapped_text(20)
+                .contains("FOREGROUND_RESTORE_MARKER"),
+            "enabling restore_running_commands should rerun the saved foreground command"
+        );
+        let _ = runtime.try_send_bytes(bytes::Bytes::from_static(b"exit\n"));
+    }
+
+    #[tokio::test]
+    async fn restore_does_not_rerun_foreground_command_when_disabled() {
+        let snapshot = snapshot_with_foreground_command(Some("echo FOREGROUND_RESTORE_MARKER"));
+        let (events, _events_rx) = mpsc::channel(8);
+        let render_notify = Arc::new(Notify::new());
+        let render_dirty = Arc::new(RenderSignal::new());
+
+        let (_workspaces, _terminals, runtimes) = restore(
+            &snapshot,
+            None,
+            24,
+            80,
+            4096,
+            test_interactive_shell(),
+            crate::config::ShellModeConfig::NonLogin,
+            false,
+            &HashMap::new(),
+            false,
+            events,
+            render_notify,
+            render_dirty,
+        );
+        let runtime = runtimes
+            .values()
+            .next()
+            .expect("restored runtime should exist");
+
+        // Give the pane a moment to settle; the marker must never appear
+        // since restore_running_commands is off by default.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(
+            !runtime
+                .recent_unwrapped_text(20)
+                .contains("FOREGROUND_RESTORE_MARKER"),
+            "restore_running_commands defaults to off and must not rerun saved commands"
+        );
+        let _ = runtime.try_send_bytes(bytes::Bytes::from_static(b"exit\n"));
     }
 }

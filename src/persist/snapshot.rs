@@ -107,6 +107,12 @@ pub struct PaneSnapshot {
     pub agent_session: Option<PaneAgentSessionSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_argv: Option<Vec<String>>,
+    /// Raw command line of a non-shell foreground process still running in
+    /// this pane at snapshot time (e.g. a TUI like lazygit), used to rerun it
+    /// on restore when `restore_running_commands` is enabled. `None` when the
+    /// pane was idle at a shell prompt or had no live runtime.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foreground_command: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -338,6 +344,12 @@ fn capture_tab(
             })
             .unwrap_or_default();
         let launch_argv = terminal.and_then(|terminal| terminal.launch_argv.clone());
+        let foreground_command = tab
+            .panes
+            .get(id)
+            .and_then(|pane| terminal_runtimes.get(&pane.attached_terminal_id))
+            .and_then(|runtime| runtime.child_pid())
+            .and_then(crate::detect::foreground_command_line);
         let agent_session = terminal.and_then(|terminal| {
             if let Some(authority) = terminal.hook_authority.as_ref() {
                 if let Some(session_ref) = authority.session_ref.as_ref() {
@@ -368,6 +380,7 @@ fn capture_tab(
                 managed_agent_kind,
                 agent_session,
                 launch_argv,
+                foreground_command,
             },
         );
     }
@@ -648,6 +661,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                foreground_command: None,
             },
         );
         panes.insert(
@@ -659,6 +673,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                foreground_command: None,
             },
         );
 
@@ -1055,6 +1070,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn capture_contract_leaves_foreground_command_unset_without_a_live_process() {
+        let state = state_with_workspaces(&["one"]);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.workspaces[0].tabs[0].panes[&root]
+            .attached_terminal_id
+            .clone();
+        let mut terminal_runtimes = TerminalRuntimeRegistry::new();
+        terminal_runtimes.insert(
+            terminal_id,
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(20, 3, 4096, b""),
+        );
+
+        let snapshot = capture_from_state_with_runtimes(&state, &terminal_runtimes);
+        let pane = &snapshot.workspaces[0].tabs[0].panes[&root.raw()];
+
+        assert!(
+            pane.foreground_command.is_none(),
+            "no real child process means nothing to persist for restore"
+        );
+    }
+
+    #[tokio::test]
     async fn capture_contract_tracks_history_for_each_pane() {
         let mut state = state_with_workspaces(&["one"]);
         let first = state.workspaces[0].tabs[0].root_pane;
@@ -1207,6 +1244,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                foreground_command: None,
             },
         );
         panes.insert(
@@ -1220,6 +1258,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                foreground_command: None,
             },
         );
 

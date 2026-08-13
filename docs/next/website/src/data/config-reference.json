@@ -1089,6 +1089,12 @@
           "type": "table<string, string>",
           "default": "{}",
           "description": "Per-agent override for the resume command, keyed by agent id (e.g. \"claude\"). The value replaces only the resume binary and any leading flags; Herdr's own resume arguments are still appended after it. Whitespace-separated, no quoting support. Unknown agent ids or empty values are ignored."
+        },
+        {
+          "key": "session.restore_running_commands",
+          "type": "boolean",
+          "default": "false",
+          "description": "Rerun the foreground command a non-agent pane was running (e.g. a TUI like lazygit) when restoring a Herdr session, by feeding the exact command line it last ran into a freshly spawned shell. Only applies when the pane was still running that command and no agent-resume match took priority."
         }
       ]
     },

@@ -431,6 +431,7 @@ impl App {
                 config.terminal.shell_mode,
                 effective_resume_agents_on_restore(config),
                 &config.session.agent_resume_command,
+                config.session.restore_running_commands,
                 event_tx.clone(),
                 render_notify.clone(),
                 render_dirty.clone(),
