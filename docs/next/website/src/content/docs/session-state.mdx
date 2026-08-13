@@ -102,6 +102,10 @@ It only applies when the pane was still running that command — not idle at a s
 
 This is unrelated to live handoff below: a handed-off pane's process never dies, so there is nothing to rerun.
 
+:::caution[Windows support is limited]
+On Windows, detecting which command a pane is running is currently narrowed to recognized AI agents, so this setting has no effect for arbitrary commands (a plain `lazygit` pane, for example) — only Linux and macOS reliably detect and restore arbitrary foreground commands today.
+:::
+
 ## Live handoff
 
 Live handoff is for update and remote attach flows that need to replace a running Herdr server. It asks the old server to transfer live panes to the new server, so pane processes can keep running across the server replacement.

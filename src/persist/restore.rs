@@ -22,6 +22,12 @@ use super::{
     WorkspaceSnapshot,
 };
 
+/// Delay before typing a restored foreground command into a freshly spawned
+/// shell. The shell/ConPTY needs a moment to attach and start reading stdin;
+/// writing immediately after spawn can silently drop the early bytes.
+const RESTORE_RUNNING_COMMAND_SETTLE_DELAY: std::time::Duration =
+    std::time::Duration::from_millis(500);
+
 struct AgentRestoreState<'a> {
     enabled: bool,
     resumed_sessions: &'a mut HashSet<String>,
@@ -497,7 +503,8 @@ fn restore_tab(
             .map(|p| p.cwd.clone())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| "/".into()));
 
-        let cwd = if saved_cwd.exists() {
+        let saved_cwd_existed = saved_cwd.exists();
+        let cwd = if saved_cwd_existed {
             saved_cwd
         } else {
             warn!(
@@ -659,18 +666,16 @@ fn restore_tab(
                     if let Some(argv) = saved_launch_argv {
                         terminal = terminal.with_launch_argv(argv).with_respawn_shell_on_exit();
                     }
-                } else if runtime_context.restore_running_commands {
+                } else if runtime_context.restore_running_commands && saved_cwd_existed {
                     if let Some(command) = saved_foreground_command.clone() {
                         let mut line = command.into_bytes();
-                        line.push(b'\n');
-                        if let Err(err) = runtime.try_send_bytes(bytes::Bytes::from(line)) {
-                            warn!(
-                                tab = ?snap.custom_name,
-                                pane_id = id.raw(),
-                                error = %err,
-                                "failed to restore foreground command, pane left at shell prompt"
-                            );
-                        }
+                        // `\r` submits the line on every shell we spawn (cmd.exe under
+                        // ConPTY specifically requires it; POSIX shells accept it too).
+                        line.push(b'\r');
+                        runtime.send_bytes_after(
+                            bytes::Bytes::from(line),
+                            RESTORE_RUNNING_COMMAND_SETTLE_DELAY,
+                        );
                     }
                 }
                 if let Some(label) = saved_label {
@@ -1882,7 +1887,11 @@ mod tests {
             .contains("FOREGROUND_RESTORE_MARKER")
             && std::time::Instant::now() < deadline
         {
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            // `send_bytes_after` drives the actual write from a spawned tokio
+            // task; block on a blocking-safe async sleep, not the OS thread,
+            // so that spawned task gets a chance to run on this single-
+            // threaded test runtime.
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
         assert!(
             runtime
