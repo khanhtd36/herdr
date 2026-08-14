@@ -4,7 +4,6 @@ use crate::config::{
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::{Direction, Rect};
 use ratatui::style::Color;
-use std::hash::{Hash, Hasher};
 
 use crate::detect::AgentState;
 use crate::layout::{PaneId, PaneInfo, SplitBorder};
@@ -12,47 +11,10 @@ use crate::selection::Selection;
 
 pub(crate) type InstalledPluginRegistry =
     std::collections::HashMap<String, crate::api::schema::InstalledPluginInfo>;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PluginPaneRecord {
     pub plugin_id: String,
     pub entrypoint: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PaneGraphicsLayer {
-    pub format: crate::api::schema::PaneGraphicsFormat,
-    pub image_width: u32,
-    pub image_height: u32,
-    pub data: Vec<u8>,
-    pub data_fingerprint: u64,
-    pub render: crate::api::schema::PaneGraphicsPlacementParams,
-}
-
-impl PaneGraphicsLayer {
-    pub(crate) fn new(
-        format: crate::api::schema::PaneGraphicsFormat,
-        image_width: u32,
-        image_height: u32,
-        data: Vec<u8>,
-        render: crate::api::schema::PaneGraphicsPlacementParams,
-    ) -> Self {
-        let data_fingerprint = pane_graphics_data_fingerprint(&data);
-        Self {
-            format,
-            image_width,
-            image_height,
-            data,
-            data_fingerprint,
-            render,
-        }
-    }
-}
-
-fn pane_graphics_data_fingerprint(data: &[u8]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    data.hash(&mut hasher);
-    hasher.finish()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1127,10 +1089,12 @@ pub(crate) enum WorkspaceDropTarget {
 
 pub(crate) enum DragTarget {
     WorkspaceReorder {
+        source_id: crate::app::InputSourceId,
         source_ws_idx: usize,
         drop_target: Option<WorkspaceDropTarget>,
     },
     TabReorder {
+        source_id: crate::app::InputSourceId,
         ws_idx: usize,
         source_tab_idx: usize,
         insert_idx: Option<usize>,
@@ -1203,6 +1167,7 @@ pub enum ContextMenuKind {
         pane_id: PaneId,
         source_pane_id: Option<PaneId>,
         has_manual_label: bool,
+        right_click_passthrough: bool,
     },
 }
 
@@ -1215,91 +1180,53 @@ pub struct ContextMenuState {
 }
 
 impl ContextMenuState {
-    pub fn items(&self) -> &'static [&'static str] {
+    pub fn items(&self) -> Vec<&'static str> {
         match self.kind {
-            ContextMenuKind::Workspace { .. } => &["Rename", "Close"],
+            ContextMenuKind::Workspace { .. } => vec!["Rename", "Close"],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: false,
                 ..
-            } => &["Rename", "Close", "New worktree", "Open worktree..."],
+            } => vec!["Rename", "Close", "New worktree", "Open worktree..."],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: true,
                 ..
-            } => &["Rename", "Close", "Delete worktree checkout..."],
+            } => vec!["Rename", "Close", "Delete worktree checkout..."],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: true,
-                collapsed: true,
+                collapsed,
                 ..
-            } => &[
+            } => vec![
                 "Rename",
                 "Close group",
                 "New worktree",
                 "Open worktree...",
-                "Expand",
+                if collapsed { "Expand" } else { "Collapse" },
             ],
-            ContextMenuKind::GitWorkspace {
-                is_linked_worktree: false,
-                has_worktree_children: true,
-                collapsed: false,
-                ..
-            } => &[
-                "Rename",
-                "Close group",
-                "New worktree",
-                "Open worktree...",
-                "Collapse",
-            ],
-            ContextMenuKind::Tab { .. } => &["New tab", "Rename", "Close"],
+            ContextMenuKind::Tab { .. } => vec!["New tab", "Rename", "Close"],
             ContextMenuKind::Pane {
-                has_manual_label: true,
-                source_pane_id: Some(_),
+                source_pane_id,
+                has_manual_label,
+                right_click_passthrough,
                 ..
-            } => &[
-                "Rename pane",
-                "Clear pane name",
-                "Swap with focused pane",
-                "Split right",
-                "Split down",
-                "Zoom",
-                "Close pane",
-            ],
-            ContextMenuKind::Pane {
-                has_manual_label: false,
-                source_pane_id: Some(_),
-                ..
-            } => &[
-                "Rename pane",
-                "Swap with focused pane",
-                "Split right",
-                "Split down",
-                "Zoom",
-                "Close pane",
-            ],
-            ContextMenuKind::Pane {
-                has_manual_label: true,
-                source_pane_id: None,
-                ..
-            } => &[
-                "Rename pane",
-                "Clear pane name",
-                "Split right",
-                "Split down",
-                "Zoom",
-                "Close pane",
-            ],
-            ContextMenuKind::Pane {
-                has_manual_label: false,
-                source_pane_id: None,
-                ..
-            } => &[
-                "Rename pane",
-                "Split right",
-                "Split down",
-                "Zoom",
-                "Close pane",
-            ],
+            } => {
+                let mut items = vec!["Rename pane"];
+                if has_manual_label {
+                    items.push("Clear pane name");
+                }
+                if source_pane_id.is_some() {
+                    items.push("Swap with focused pane");
+                }
+                items.extend(["Split right", "Split down", "Zoom"]);
+                items.push(if right_click_passthrough {
+                    "Use Herdr right-click menu"
+                } else {
+                    "Send right-clicks to pane"
+                });
+                items.push("Close pane");
+                items
+            }
         }
     }
 }
@@ -1392,6 +1319,12 @@ pub(crate) struct PaneFocusTarget {
 
 /// All application state — pure data, no channels or async runtime.
 /// Testable without PTYs or a tokio runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TabBarStatusSegment {
+    Zoom,
+    Text(Option<String>),
+}
+
 pub struct AppState {
     pub terminals:
         std::collections::HashMap<crate::terminal::TerminalId, crate::terminal::TerminalState>,
@@ -1451,8 +1384,9 @@ pub struct AppState {
     // View geometry (computed before render, consumed by render + mouse)
     pub view: ViewState,
     pub(crate) drag: Option<DragState>,
-    pub(crate) workspace_press: Option<WorkspacePressState>,
-    pub(crate) tab_press: Option<TabPressState>,
+    pub(crate) workspace_presses:
+        std::collections::HashMap<crate::app::InputSourceId, WorkspacePressState>,
+    pub(crate) tab_presses: std::collections::HashMap<crate::app::InputSourceId, TabPressState>,
     pub selection: Option<Selection>,
     pub selection_autoscroll: Option<SelectionAutoscroll>,
     pub context_menu: Option<ContextMenuState>,
@@ -1505,11 +1439,14 @@ pub struct AppState {
     pub prompt_new_tab_name: bool,
     pub prompt_new_workspace_name: bool,
     pub pane_borders: bool,
+    pub pane_outer_borders: bool,
     pub pane_scrollbars: bool,
     pub pane_gaps: bool,
     pub show_agent_labels_on_pane_borders: bool,
     pub hide_tab_bar_when_single_tab: bool,
     pub tab_bar_position: TabBarPositionConfig,
+    pub tab_bar_right: Vec<TabBarStatusSegment>,
+    pub tab_bar_right_separator: String,
     pub pane_history_persistence: bool,
     /// Expose the focused pane's cursor anchor to the outer terminal even when
     /// the pane requested `?25l`. See `[experimental] reveal_hidden_cursor_for_cjk_ime`.
@@ -1564,12 +1501,6 @@ pub struct AppState {
     pub(crate) installed_plugins: InstalledPluginRegistry,
     /// Pane ids opened through the plugin pane API.
     pub(crate) plugin_panes: std::collections::HashMap<PaneId, PluginPaneRecord>,
-    /// Runtime image layers owned by API clients and composited over panes.
-    pub(crate) pane_graphics_layers: std::collections::HashMap<PaneId, PaneGraphicsLayer>,
-    /// Active streaming graphics owner token by pane id.
-    pub(crate) pane_graphics_streams: std::collections::HashMap<PaneId, String>,
-    /// Monotonic marker for accepted pane graphics mutations.
-    pub(crate) pane_graphics_revision: u64,
     /// Session-modal terminal popup. This is intentionally outside workspace layouts.
     pub(crate) popup_pane: Option<PopupPaneState>,
     /// Recent plugin action/event command executions.
@@ -1582,6 +1513,8 @@ pub struct AppState {
     pub host_terminal_theme: TerminalTheme,
     /// Last known foreground host terminal cell size in pixels.
     pub(crate) host_cell_size: crate::kitty_graphics::HostCellSize,
+    /// Exact pixel provenance only while one confirmed SGR report is dispatched.
+    pub(crate) host_mouse_pixels: Option<crate::input::mouse::HostPixels>,
     /// Set when a persisted session snapshot would change.
     pub session_dirty: bool,
     /// Terminal runtimes that should be shut down by the app/runtime layer
@@ -1836,8 +1769,8 @@ impl AppState {
                 split_borders: Vec::new(),
             },
             drag: None,
-            workspace_press: None,
-            tab_press: None,
+            workspace_presses: std::collections::HashMap::new(),
+            tab_presses: std::collections::HashMap::new(),
             selection: None,
             selection_autoscroll: None,
             context_menu: None,
@@ -1879,11 +1812,14 @@ impl AppState {
             prompt_new_tab_name: true,
             prompt_new_workspace_name: false,
             pane_borders: true,
+            pane_outer_borders: true,
             pane_scrollbars: true,
             pane_gaps: false,
             show_agent_labels_on_pane_borders: false,
             hide_tab_bar_when_single_tab: false,
             tab_bar_position: TabBarPositionConfig::Top,
+            tab_bar_right: Vec::new(),
+            tab_bar_right_separator: " ".into(),
             pane_history_persistence: false,
             reveal_hidden_cursor_for_cjk_ime: false,
             cjk_ime_agent_filter_configured: false,
@@ -1929,9 +1865,6 @@ impl AppState {
             integration_install_messages: Vec::new(),
             installed_plugins: std::collections::HashMap::new(),
             plugin_panes: std::collections::HashMap::new(),
-            pane_graphics_layers: std::collections::HashMap::new(),
-            pane_graphics_streams: std::collections::HashMap::new(),
-            pane_graphics_revision: 0,
             popup_pane: None,
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
@@ -1939,6 +1872,7 @@ impl AppState {
             global_menu: MenuListState::new(0),
             host_terminal_theme: TerminalTheme::default(),
             host_cell_size: crate::kitty_graphics::HostCellSize::default(),
+            host_mouse_pixels: None,
             session_dirty: false,
             terminal_runtime_shutdowns: Vec::new(),
         }
@@ -2034,16 +1968,20 @@ impl AppState {
                 "empty app state must not keep drag state"
             );
             assert!(
-                self.workspace_press.is_none(),
+                self.workspace_presses.is_empty(),
                 "empty app state must not keep workspace press state"
             );
             assert!(
-                self.tab_press.is_none(),
+                self.tab_presses.is_empty(),
                 "empty app state must not keep tab press state"
             );
             assert!(
                 self.context_menu.is_none(),
                 "empty app state must not keep context menu"
+            );
+            assert!(
+                self.host_mouse_pixels.is_none(),
+                "empty app state must not keep host mouse pixel provenance"
             );
             return;
         }
@@ -2201,6 +2139,7 @@ impl AppState {
                 DragTarget::WorkspaceReorder {
                     source_ws_idx,
                     drop_target,
+                    ..
                 } => {
                     assert_workspace_index(*source_ws_idx, "workspace drag source");
                     if let Some(WorkspaceDropTarget::Before(ws_idx)) = drop_target {
@@ -2211,6 +2150,7 @@ impl AppState {
                     ws_idx,
                     source_tab_idx,
                     insert_idx,
+                    ..
                 } => {
                     assert_tab_index(*ws_idx, *source_tab_idx, "tab drag source");
                     if let Some(insert_idx) = insert_idx {
@@ -2229,10 +2169,10 @@ impl AppState {
                 _ => {}
             }
         }
-        if let Some(press) = &self.workspace_press {
+        for press in self.workspace_presses.values() {
             assert_workspace_index(press.ws_idx, "workspace press");
         }
-        if let Some(press) = &self.tab_press {
+        for press in self.tab_presses.values() {
             assert_tab_index(press.ws_idx, press.tab_idx, "tab press");
         }
         if let Some(menu) = &self.context_menu {
