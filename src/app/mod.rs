@@ -148,6 +148,7 @@ pub struct App {
     /// Parsed `ui.window_title` plus the hostname resolved when it was applied.
     window_title_template: Option<(crate::config::WindowTitleTemplate, String)>,
     pub(crate) persist_pane_history: bool,
+    pub(crate) restore_running_commands: bool,
     pub(crate) last_render_at: Option<Instant>,
     pub(crate) input_leases: input::InputLeaseTable,
     pub render_notify: Arc<Notify>,
@@ -444,6 +445,7 @@ impl App {
                 config.terminal.shell_mode,
                 effective_resume_agents_on_restore(config),
                 &config.session.agent_resume_command,
+                config.session.restore_running_commands,
                 event_tx.clone(),
                 render_notify.clone(),
                 render_dirty.clone(),
@@ -808,6 +810,7 @@ impl App {
             selection_autoscroll_deadline: None,
             selection_highlight_clear_deadline: None,
             persist_pane_history: config.experimental.pane_history,
+            restore_running_commands: config.session.restore_running_commands,
             last_render_at: None,
             input_leases: input::InputLeaseTable::default(),
             api_rx,

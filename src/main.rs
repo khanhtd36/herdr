@@ -421,6 +421,13 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # a Herdr server restart. Requires official integrations that report session refs.
 # resume_agents_on_restore = true
 
+# Rerun the foreground command a non-agent pane was running (e.g. a TUI like
+# lazygit) after a Herdr server restart, by feeding the exact command line it
+# last ran into a freshly spawned shell. Only applies when the pane was still
+# running that command (not idle at a shell prompt) and no agent-resume match
+# took priority.
+# restore_running_commands = false
+
 [remote]
 # Whether herdr manages the ssh config used for `herdr --remote`.
 # When true (default), herdr runs remote ssh through a generated config that

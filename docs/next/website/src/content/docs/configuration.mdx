@@ -500,6 +500,17 @@ codex = "codex --dangerously-bypass-approvals-and-sandbox"
 
 The value replaces only the resume binary and any extra tokens before it; Herdr still appends its own resume arguments (e.g. `--resume <session-id>`) after it. Values are split on whitespace, so quoting or arguments containing spaces are not supported. Unknown Agent ids or empty values are ignored, with a config diagnostic.
 
+### Restoring running commands
+
+Herdr can also rerun the foreground command a non-Agent pane was running (e.g. a TUI like `lazygit`) after a server restart, by feeding the exact command line it last ran into a freshly spawned shell. This is off by default:
+
+```toml
+[session]
+restore_running_commands = true
+```
+
+Only applies when the pane was still running that command (not idle at a shell prompt) at the time of the previous shutdown. Agent-resume (above) always takes priority when both could apply. Detecting arbitrary running commands is currently Linux/macOS only; see [Session state and restore](/docs/session-state/) for the Windows limitation.
+
 ## IME cursor tracking
 
 On macOS, AI Agent TUIs that hide the hardware cursor can prevent native input-method candidate windows from following the focused pane. Reveal a cursor anchor for those panes with:

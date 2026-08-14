@@ -302,6 +302,12 @@ pub struct SessionConfig {
     /// can also carry extra flags, e.g. "claude --dangerously-skip-permissions".
     /// Unknown agent ids or empty values are ignored. Default: empty.
     pub agent_resume_command: HashMap<String, String>,
+    /// Rerun the foreground command a non-agent pane was running (e.g. a TUI
+    /// like lazygit) when restoring a Herdr session, by feeding the exact
+    /// command line it last ran into a freshly spawned shell. Only applies
+    /// when the pane was still running that command (not idle at a shell
+    /// prompt) and no agent-resume match took priority. Default: false.
+    pub restore_running_commands: bool,
 }
 
 impl Default for SessionConfig {
@@ -309,6 +315,7 @@ impl Default for SessionConfig {
         Self {
             resume_agents_on_restore: true,
             agent_resume_command: HashMap::new(),
+            restore_running_commands: false,
         }
     }
 }
@@ -1357,6 +1364,19 @@ resume_agents_on_restore = false
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.session.resume_agents_on_restore);
+    }
+
+    #[test]
+    fn restore_running_commands_defaults_off_and_parses() {
+        let default_config = Config::default();
+        assert!(!default_config.session.restore_running_commands);
+
+        let toml = r#"
+[session]
+restore_running_commands = true
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.session.restore_running_commands);
     }
 
     #[test]
