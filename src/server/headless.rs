@@ -1997,11 +1997,7 @@ impl HeadlessServer {
         let Some(agent_label) = update.agent_label.as_deref() else {
             return;
         };
-        let event_text = match kind {
-            crate::app::state::ToastKind::NeedsAttention => "needs attention",
-            crate::app::state::ToastKind::Finished => "finished",
-            crate::app::state::ToastKind::UpdateInstalled => "updated",
-        };
+        let event_text = kind.event_text();
         let workspace_label =
             ws.display_name_from(&self.app.state.terminals, &self.app.terminal_runtimes);
         let context = crate::app::actions::notification_context(
@@ -3880,11 +3876,7 @@ impl HeadlessServer {
                         .get(&pane_after.attached_terminal_id)
                         .and_then(|terminal| terminal.effective_agent_label())
                     {
-                        let event_text = match kind {
-                            crate::app::state::ToastKind::NeedsAttention => "needs attention",
-                            crate::app::state::ToastKind::Finished => "finished",
-                            crate::app::state::ToastKind::UpdateInstalled => "updated",
-                        };
+                        let event_text = kind.event_text();
                         let workspace_label = self.app.state.workspaces[*ws_idx].display_name_from(
                             &self.app.state.terminals,
                             &self.app.terminal_runtimes,

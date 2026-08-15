@@ -511,13 +511,23 @@ fn render_pane_borders(
         let focused = pane_infos
             .iter()
             .any(|info| info.is_focused && line_touches_pane(x, y, info, app.pane_gaps));
+        // Pane marked for a swap (`pending_pane_swap`) outranks focus: it's
+        // the rarer, more important signal, and confirms the mark landed
+        // even when the marked pane is still the focused one.
+        let armed = app.pending_pane_swap.as_ref().is_some_and(|pending| {
+            pane_infos.iter().any(|info| {
+                info.id == pending.pane_id && line_touches_pane(x, y, info, app.pane_gaps)
+            })
+        });
         let symbol = line_cell_symbol(line);
         if symbol.is_empty() {
             continue;
         }
         let cell = &mut buf[(x, y)];
         cell.set_symbol(symbol);
-        let color = if focused {
+        let color = if armed {
+            app.palette.mauve
+        } else if focused {
             app.palette.accent
         } else {
             app.palette.overlay0

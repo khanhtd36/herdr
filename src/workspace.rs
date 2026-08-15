@@ -1233,6 +1233,78 @@ impl Workspace {
         false
     }
 
+    /// Swap two panes' exact tree positions, same tab or across tabs in this
+    /// workspace. Position, split shape, and ratios are preserved at each
+    /// slot; only pane identity trades. Returns false when either pane is
+    /// missing or the two ids are equal.
+    pub fn swap_panes(&mut self, first: PaneId, second: PaneId) -> bool {
+        if first == second {
+            return false;
+        }
+        let Some(tab_a) = self.find_tab_index_for_pane(first) else {
+            return false;
+        };
+        let Some(tab_b) = self.find_tab_index_for_pane(second) else {
+            return false;
+        };
+
+        if tab_a == tab_b {
+            let tab = &mut self.tabs[tab_a];
+            let swapped = tab.layout.swap_panes(first, second);
+            if swapped {
+                if tab.root_pane == first {
+                    tab.root_pane = second;
+                } else if tab.root_pane == second {
+                    tab.root_pane = first;
+                }
+                tab.zoomed = false;
+            }
+            return swapped;
+        }
+
+        let (lo, hi) = if tab_a < tab_b {
+            (tab_a, tab_b)
+        } else {
+            (tab_b, tab_a)
+        };
+        let (left, right) = self.tabs.split_at_mut(hi);
+        let (tab_first, tab_second) = if tab_a < tab_b {
+            (&mut left[lo], &mut right[0])
+        } else {
+            (&mut right[0], &mut left[lo])
+        };
+
+        if !tab_first.layout.swap_in_pane(first, second) {
+            return false;
+        }
+        if !tab_second.layout.swap_in_pane(second, first) {
+            // Roll back: put `second` back in tab_first's slot as `first`.
+            tab_first.layout.swap_in_pane(second, first);
+            return false;
+        }
+
+        let state_first = tab_first
+            .panes
+            .remove(&first)
+            .expect("swap source pane state present");
+        let state_second = tab_second
+            .panes
+            .remove(&second)
+            .expect("swap target pane state present");
+        tab_first.panes.insert(second, state_second);
+        tab_second.panes.insert(first, state_first);
+
+        if tab_first.root_pane == first {
+            tab_first.root_pane = second;
+        }
+        if tab_second.root_pane == second {
+            tab_second.root_pane = first;
+        }
+        tab_first.zoomed = false;
+        tab_second.zoomed = false;
+        true
+    }
+
     #[cfg(test)]
     fn register_new_pane(&mut self, pane_id: PaneId) {
         self.register_new_pane_with_number(pane_id, self.next_public_pane_number);
@@ -1809,6 +1881,23 @@ mod tests {
         assert_eq!(ws.tabs[2].number, 1);
         assert_eq!(ws.tabs[2].root_pane, moved_root);
         assert_eq!(ws.tabs[ws.active_tab].root_pane, active_root);
+        ws.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn same_tab_swap_involving_root_pane_keeps_root_pane_anchor_valid() {
+        let mut ws = Workspace::test_new("root-swap");
+        let root = ws.tabs[0].root_pane;
+        let other = ws.test_split(Direction::Horizontal);
+
+        assert!(ws.swap_panes(root, other));
+
+        // `root` traded slots with `other`; the tab's root-pane anchor must
+        // follow whichever pane now occupies that slot, matching the
+        // cross-tab branch's behavior (a Tab invariant: root_pane must
+        // always reference a pane still present in the tab).
+        assert_eq!(ws.tabs[0].root_pane, other);
+        assert!(ws.tabs[0].panes.contains_key(&ws.tabs[0].root_pane));
         ws.assert_invariants_for_test();
     }
 }

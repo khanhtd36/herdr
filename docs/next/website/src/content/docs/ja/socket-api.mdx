@@ -220,7 +220,7 @@ CLI の `herdr api snapshot` は、クライアントやエージェントが簡
 {"id":"req_swap_explicit","method":"pane.swap","params":{"source_pane_id":"w1:p1","target_pane_id":"w1:p2"}}
 ```
 
-入れ替えは同じタブ内に限られます。分割の形、分割比率、ペイン id、実行中のプロセスを保存します。レスポンスは `type: "pane_swap"` で、`changed`、任意の `reason`、`source_pane_id`、任意の `target_pane_id`、`focused_pane_id`、`layout` を含みます。reason の値は `no_neighbor`、`same_pane`、`not_found`、`cross_tab` です。タブがズームされている場合、入れ替えはズームを維持したまま隠れた全タブレイアウトを変更します。
+入れ替えは同じタブ内、または同じワークスペース内の別のタブに対して機能します。ワークスペースをまたぐ入れ替えは拒否されます。分割の形、分割比率、ペイン id、実行中のプロセスを保存します。レスポンスは `type: "pane_swap"` で、`changed`、任意の `reason`、`source_pane_id`、任意の `target_pane_id`、`focused_pane_id`、`layout` を含みます。reason の値は `no_neighbor`、`same_pane`、`not_found`、`cross_workspace` です。タブがズームされている場合、入れ替えはズームを維持したまま隠れた全タブレイアウトを変更します。
 
 `pane.move` は、実行中のペインを別のタブ、新しいタブ、または新しいワークスペースに移動します:
 

@@ -713,11 +713,7 @@ impl App {
             else {
                 continue;
             };
-            let event_text = match kind {
-                ToastKind::NeedsAttention => "needs attention",
-                ToastKind::Finished => "finished",
-                ToastKind::UpdateInstalled => "updated",
-            };
+            let event_text = kind.event_text();
             let workspace_label =
                 ws.display_name_from(&self.state.terminals, &self.terminal_runtimes);
             let _ = notify(
@@ -742,6 +738,7 @@ impl App {
                     ToastKind::NeedsAttention => Duration::from_secs(8),
                     ToastKind::Finished => Duration::from_secs(5),
                     ToastKind::UpdateInstalled => Duration::from_secs(3),
+                    ToastKind::Warning => Duration::from_secs(4),
                 };
                 Instant::now() + duration
             });

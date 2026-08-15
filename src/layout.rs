@@ -271,6 +271,25 @@ impl TileLayout {
         true
     }
 
+    /// Replace `old` with `new` at `old`'s exact tree slot, preserving
+    /// position, split shape, and ratios. Used for cross-tab pane swaps,
+    /// where the incoming pane takes the departing pane's slot in a
+    /// different tab's tree. If `old` was focused, `new` inherits focus;
+    /// stale focus history pointing at `old` is cleared. Returns false
+    /// (no-op) when `old` is not present.
+    pub fn swap_in_pane(&mut self, old: PaneId, new: PaneId) -> bool {
+        if !replace_pane_id(&mut self.root, old, new) {
+            return false;
+        }
+        if self.focus == old {
+            self.focus = new;
+        }
+        if self.prev_focus == Some(old) {
+            self.prev_focus = None;
+        }
+        true
+    }
+
     /// Set the ratio of a split node at the given path.
     pub fn set_ratio_at(&mut self, path: &[bool], ratio: f32) -> bool {
         set_ratio_at(&mut self.root, path, ratio.clamp(0.1, 0.9))
@@ -587,6 +606,23 @@ fn swap_pane_ids(node: &mut Node, first: PaneId, second: PaneId) {
     }
 }
 
+/// Replace one pane id with another at its exact tree slot. Single-direction
+/// counterpart to `swap_pane_ids`, used when the incoming id isn't already
+/// present elsewhere in this tree (cross-tab swap). Returns true if `old`
+/// was found.
+fn replace_pane_id(node: &mut Node, old: PaneId, new: PaneId) -> bool {
+    match node {
+        Node::Pane(id) if *id == old => {
+            *id = new;
+            true
+        }
+        Node::Pane(_) => false,
+        Node::Split { first, second, .. } => {
+            replace_pane_id(first, old, new) || replace_pane_id(second, old, new)
+        }
+    }
+}
+
 fn split_at(
     node: Node,
     target: PaneId,
@@ -793,6 +829,44 @@ mod tests {
         assert_eq!(after_rects[1], (pane(4), before_rects[1].1));
         assert_eq!(after_rects[2], before_rects[2]);
         assert_eq!(after_rects[3], (pane(2), before_rects[3].1));
+    }
+
+    #[test]
+    fn swap_in_pane_replaces_id_preserving_shape_and_focus() {
+        let mut layout = sample_layout();
+        layout.focus_pane(pane(4));
+        let before_splits = split_snapshot(&layout);
+
+        assert!(layout.swap_in_pane(pane(4), pane(99)));
+
+        assert_eq!(split_snapshot(&layout), before_splits);
+        assert!(layout.pane_ids().contains(&pane(99)));
+        assert!(!layout.pane_ids().contains(&pane(4)));
+        assert_eq!(layout.focused(), pane(99));
+    }
+
+    #[test]
+    fn swap_in_pane_clears_stale_focus_history() {
+        let mut layout = sample_layout();
+        layout.focus_pane(pane(4));
+        layout.focus_pane(pane(2));
+
+        assert!(layout.swap_in_pane(pane(4), pane(99)));
+        assert!(layout.close_focused());
+
+        // prev_focus pointed at pane(4), which just left the tree; the
+        // history must not resolve to a now-foreign id.
+        assert_ne!(layout.focused(), pane(4));
+    }
+
+    #[test]
+    fn swap_in_pane_is_noop_for_missing_pane() {
+        let mut layout = sample_layout();
+        let before_splits = split_snapshot(&layout);
+
+        assert!(!layout.swap_in_pane(pane(99), pane(100)));
+
+        assert_eq!(split_snapshot(&layout), before_splits);
     }
 
     #[test]
