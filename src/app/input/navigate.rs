@@ -602,14 +602,11 @@ impl App {
         );
     }
 
-    /// Two-phase pane swap: first press on a pane arms it; a second press on
-    /// a different pane in the same workspace swaps it in (same tab or
-    /// another tab); a second press on the same pane cancels. Armed state
-    /// survives a workspace switch so scope can be enforced explicitly: a
-    /// confirm attempt from a different workspace shows a warning instead of
-    /// silently doing nothing.
-    /// Mark the focused pane for a swap. Always sets the mark (overwrites any
-    /// existing one) — mirrors tmux's `select-pane -m`, not a toggle.
+    /// Mark the focused pane for a swap. Always sets the mark and overwrites
+    /// any existing one; this mirrors tmux's `select-pane -m` and is not a
+    /// toggle. The mark survives a workspace switch so a cross-workspace
+    /// confirm attempt can be rejected with a warning instead of silently
+    /// doing nothing.
     pub(crate) fn mark_pane(&mut self) {
         let Some((ws_idx, pane_id)) = self.focused_pane_target() else {
             return;

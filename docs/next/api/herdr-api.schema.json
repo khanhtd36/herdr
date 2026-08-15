@@ -7881,7 +7881,7 @@
             "no_neighbor",
             "same_pane",
             "not_found",
-            "cross_tab"
+            "cross_workspace"
           ],
           "type": "string"
         },

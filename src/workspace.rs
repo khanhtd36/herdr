@@ -1239,6 +1239,11 @@ impl Workspace {
             let tab = &mut self.tabs[tab_a];
             let swapped = tab.layout.swap_panes(first, second);
             if swapped {
+                if tab.root_pane == first {
+                    tab.root_pane = second;
+                } else if tab.root_pane == second {
+                    tab.root_pane = first;
+                }
                 tab.zoomed = false;
             }
             return swapped;
@@ -1863,6 +1868,23 @@ mod tests {
         assert_eq!(ws.tabs[2].number, 1);
         assert_eq!(ws.tabs[2].root_pane, moved_root);
         assert_eq!(ws.tabs[ws.active_tab].root_pane, active_root);
+        ws.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn same_tab_swap_involving_root_pane_keeps_root_pane_anchor_valid() {
+        let mut ws = Workspace::test_new("root-swap");
+        let root = ws.tabs[0].root_pane;
+        let other = ws.test_split(Direction::Horizontal);
+
+        assert!(ws.swap_panes(root, other));
+
+        // `root` traded slots with `other`; the tab's root-pane anchor must
+        // follow whichever pane now occupies that slot, matching the
+        // cross-tab branch's behavior (a Tab invariant: root_pane must
+        // always reference a pane still present in the tab).
+        assert_eq!(ws.tabs[0].root_pane, other);
+        assert!(ws.tabs[0].panes.contains_key(&ws.tabs[0].root_pane));
         ws.assert_invariants_for_test();
     }
 }

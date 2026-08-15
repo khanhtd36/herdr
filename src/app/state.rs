@@ -1312,6 +1312,20 @@ pub enum ToastKind {
     Warning,
 }
 
+impl ToastKind {
+    /// Short event label used in desktop-notification text (e.g. "agent
+    /// needs attention"). The single accessor keeps every call site in sync
+    /// when a new kind is added.
+    pub fn event_text(self) -> &'static str {
+        match self {
+            ToastKind::NeedsAttention => "needs attention",
+            ToastKind::Finished => "finished",
+            ToastKind::UpdateInstalled => "updated",
+            ToastKind::Warning => "warning",
+        }
+    }
+}
+
 /// Pane armed by the keyboard swap-toggle action. See `AppState::pending_pane_swap`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingPaneSwap {

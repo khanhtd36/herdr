@@ -196,15 +196,6 @@ fn toast_agent_label(agent_label: &str) -> &str {
     agent_label
 }
 
-fn toast_event_text(kind: ToastKind) -> &'static str {
-    match kind {
-        ToastKind::NeedsAttention => "needs attention",
-        ToastKind::Finished => "finished",
-        ToastKind::UpdateInstalled => "updated",
-        ToastKind::Warning => "warning",
-    }
-}
-
 fn sound_for_toast_kind(
     kind: ToastKind,
     suppress_active_tab_notifications: bool,
@@ -1958,6 +1949,14 @@ impl AppState {
         }
     }
 
+    /// Direct-state counterpart to `App`'s `UnmarkPane` dispatch (a one-line
+    /// action with no production-only logic to diverge from) for tests that
+    /// don't go through the runtime/API layer.
+    #[cfg(test)]
+    pub fn unmark_pane(&mut self) {
+        self.pending_pane_swap = None;
+    }
+
     #[cfg(test)]
     pub fn resize_pane(&mut self, direction: NavDirection) {
         if let Some(first) = self.view.pane_infos.first() {
@@ -3313,11 +3312,7 @@ impl AppState {
                 notification_context(&self.workspaces[ws_idx], &workspace_label, ws_idx, pane_id);
             ToastNotification {
                 kind,
-                title: format!(
-                    "{} {}",
-                    toast_agent_label(&agent_label),
-                    toast_event_text(kind)
-                ),
+                title: format!("{} {}", toast_agent_label(&agent_label), kind.event_text()),
                 context,
                 position: None,
                 target: Some(ToastTarget {
@@ -6172,6 +6167,19 @@ mod tests {
         let target = state.workspaces[0].test_split(Direction::Horizontal);
         state.workspaces[0].tabs[0].layout.focus_pane(source);
 
+        let area = ratatui::layout::Rect::new(0, 0, 100, 40);
+        let rect_of = |state: &AppState, id: PaneId| {
+            state.workspaces[0].tabs[0]
+                .layout
+                .panes(area)
+                .into_iter()
+                .find(|info| info.id == id)
+                .map(|info| info.rect)
+                .expect("pane should be in layout")
+        };
+        let source_rect_before = rect_of(&state, source);
+        let target_rect_before = rect_of(&state, target);
+
         assert!(state.mark_pane());
         assert!(state.pending_pane_swap.is_some());
 
@@ -6180,10 +6188,10 @@ mod tests {
 
         assert!(state.pending_pane_swap.is_none());
         assert_eq!(state.workspaces[0].tabs[0].layout.pane_ids().len(), 2);
-        assert!(state.workspaces[0].tabs[0]
-            .layout
-            .pane_ids()
-            .contains(&source));
+        // Panes actually exchanged positions, not just both still present
+        // (which would also hold for a no-op).
+        assert_eq!(rect_of(&state, source), target_rect_before);
+        assert_eq!(rect_of(&state, target), source_rect_before);
     }
 
     #[test]
@@ -6229,9 +6237,11 @@ mod tests {
         assert!(state.pending_pane_swap.is_some());
 
         // Switch workspace before unmarking — clearing needs no proximity to
-        // the marked pane at all.
+        // the marked pane at all. Drive it through `unmark_pane()` (rather
+        // than assigning the field directly) so this exercises the same
+        // action production dispatch calls.
         state.active = Some(1);
-        state.pending_pane_swap = None;
+        state.unmark_pane();
 
         assert!(state.pending_pane_swap.is_none());
     }

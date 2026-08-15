@@ -49,20 +49,11 @@ pub(crate) fn toast_message_from_state_change(
                 Some(format!(
                     "{} {}: {}",
                     agent_label,
-                    toast_event_text(kind),
+                    kind.event_text(),
                     app::actions::notification_context(ws, &workspace_label, ws_idx, pane_id)
                 ))
             })
         })
-}
-
-fn toast_event_text(kind: app::state::ToastKind) -> &'static str {
-    match kind {
-        app::state::ToastKind::NeedsAttention => "needs attention",
-        app::state::ToastKind::Finished => "finished",
-        app::state::ToastKind::UpdateInstalled => "updated",
-        app::state::ToastKind::Warning => "warning",
-    }
 }
 
 #[cfg(test)]

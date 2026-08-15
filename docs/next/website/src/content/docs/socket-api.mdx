@@ -266,12 +266,13 @@ conflict with caller-provided env.
 {"id":"req_swap_explicit","method":"pane.swap","params":{"source_pane_id":"w1:p1","target_pane_id":"w1:p2"}}
 ```
 
-Swap is same-tab only. It preserves split shape, split ratios, pane ids, and
+Swap works within a tab or across tabs in the same workspace; it rejects a
+swap across workspaces. It preserves split shape, split ratios, pane ids, and
 running processes. The response is `type: "pane_swap"` with `changed`, optional
 `reason`, `source_pane_id`, optional `target_pane_id`, `focused_pane_id`, and
 `layout`. Reason values are `no_neighbor`, `same_pane`, `not_found`, and
-`cross_tab`. When a tab is zoomed, swap keeps zoom active and mutates the hidden
-full-tab layout.
+`cross_workspace`. When a tab is zoomed, swap keeps zoom active and mutates the
+hidden full-tab layout.
 
 `pane.move` moves a running pane to a different tab, a new tab, or a new
 workspace:

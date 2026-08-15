@@ -220,7 +220,7 @@ CLI 的 `herdr api snapshot` 会把当前 `session.snapshot` 响应输出为 JSO
 {"id":"req_swap_explicit","method":"pane.swap","params":{"source_pane_id":"w1:p1","target_pane_id":"w1:p2"}}
 ```
 
-交换仅限同一标签页。它保留分割形状、分割比例、窗格 id 和运行中的进程。响应是 `type: "pane_swap"`,带 `changed`、可选的 `reason`、`source_pane_id`、可选的 `target_pane_id`、`focused_pane_id` 和 `layout`。reason 的取值有 `no_neighbor`、`same_pane`、`not_found` 和 `cross_tab`。标签页处于缩放状态时,交换保持缩放,并修改隐藏的整页布局。
+交换可在同一标签页内进行,也可在同一工作区的不同标签页之间进行;跨工作区的交换会被拒绝。它保留分割形状、分割比例、窗格 id 和运行中的进程。响应是 `type: "pane_swap"`,带 `changed`、可选的 `reason`、`source_pane_id`、可选的 `target_pane_id`、`focused_pane_id` 和 `layout`。reason 的取值有 `no_neighbor`、`same_pane`、`not_found` 和 `cross_workspace`。标签页处于缩放状态时,交换保持缩放,并修改隐藏的整页布局。
 
 `pane.move` 把运行中的窗格移动到另一个标签页、新标签页或新工作区:
 
