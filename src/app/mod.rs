@@ -615,6 +615,7 @@ impl App {
             selection: None,
             selection_autoscroll: None,
             context_menu: None,
+            pending_pane_swap: None,
             update_available,
             update_install_command,
             latest_release_notes_available,

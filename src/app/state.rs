@@ -1309,6 +1309,14 @@ pub enum ToastKind {
     NeedsAttention,
     Finished,
     UpdateInstalled,
+    Warning,
+}
+
+/// Pane armed by the keyboard swap-toggle action. See `AppState::pending_pane_swap`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingPaneSwap {
+    pub workspace_id: String,
+    pub pane_id: PaneId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1456,6 +1464,14 @@ pub struct AppState {
     pub selection: Option<Selection>,
     pub selection_autoscroll: Option<SelectionAutoscroll>,
     pub context_menu: Option<ContextMenuState>,
+    /// Pane armed by the keyboard swap-toggle action, awaiting a second
+    /// press on a different pane to swap into. Client-side presentation
+    /// state only: not persisted, not synced across clients, cleared on
+    /// restart. Survives switching to a different workspace so the swap can
+    /// still be confirmed (or cleared silently) later; it holds the source
+    /// workspace so a cross-workspace confirm attempt can be recognized and
+    /// rejected with a warning instead of silently doing nothing.
+    pub pending_pane_swap: Option<PendingPaneSwap>,
     // Notifications
     pub update_available: Option<String>,
     pub update_install_command: String,
@@ -1841,6 +1857,7 @@ impl AppState {
             selection: None,
             selection_autoscroll: None,
             context_menu: None,
+            pending_pane_swap: None,
             update_available: None,
             update_install_command: "herdr update".into(),
             latest_release_notes_available: false,

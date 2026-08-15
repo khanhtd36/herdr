@@ -388,6 +388,18 @@ impl App {
                 self.swap_pane_direction_via_api(NavDirection::Right);
                 leave_navigate_mode(&mut self.state);
             }
+            NavigateAction::MarkPane => {
+                self.mark_pane();
+                leave_navigate_mode(&mut self.state);
+            }
+            NavigateAction::UnmarkPane => {
+                self.state.pending_pane_swap = None;
+                leave_navigate_mode(&mut self.state);
+            }
+            NavigateAction::SwapMarkedPane => {
+                self.swap_marked_pane();
+                leave_navigate_mode(&mut self.state);
+            }
             NavigateAction::SplitVertical => {
                 self.split_focused_pane_via_api(crate::api::schema::SplitDirection::Right);
                 leave_navigate_mode(&mut self.state);
@@ -588,6 +600,96 @@ impl App {
                 target_pane_id: None,
             },
         );
+    }
+
+    /// Two-phase pane swap: first press on a pane arms it; a second press on
+    /// a different pane in the same workspace swaps it in (same tab or
+    /// another tab); a second press on the same pane cancels. Armed state
+    /// survives a workspace switch so scope can be enforced explicitly: a
+    /// confirm attempt from a different workspace shows a warning instead of
+    /// silently doing nothing.
+    /// Mark the focused pane for a swap. Always sets the mark (overwrites any
+    /// existing one) — mirrors tmux's `select-pane -m`, not a toggle.
+    pub(crate) fn mark_pane(&mut self) {
+        let Some((ws_idx, pane_id)) = self.focused_pane_target() else {
+            return;
+        };
+        let Some(workspace_id) = self.state.workspaces.get(ws_idx).map(|ws| ws.id.clone()) else {
+            return;
+        };
+        self.state.pending_pane_swap = Some(crate::app::state::PendingPaneSwap {
+            workspace_id,
+            pane_id,
+        });
+    }
+
+    /// Swap the marked pane with the focused pane, same tab or another tab in
+    /// this workspace. The mark is left armed on every failure except a dead
+    /// marked pane (closed/died since marking) — a cross-workspace attempt
+    /// shows a warning but keeps the mark so the user can switch back and
+    /// retry; same-pane and no-op cases are silent, matching the existing
+    /// directional-swap no-op precedent.
+    pub(crate) fn swap_marked_pane(&mut self) {
+        let Some(pending) = self.state.pending_pane_swap.clone() else {
+            return;
+        };
+        let armed_still_live = self
+            .state
+            .workspaces
+            .iter()
+            .any(|ws| ws.find_tab_index_for_pane(pending.pane_id).is_some());
+        if !armed_still_live {
+            self.state.pending_pane_swap = None;
+            return;
+        }
+
+        let Some((ws_idx, pane_id)) = self.focused_pane_target() else {
+            return;
+        };
+        if pending.pane_id == pane_id {
+            return;
+        }
+        let Some(workspace_id) = self.state.workspaces.get(ws_idx).map(|ws| ws.id.clone()) else {
+            return;
+        };
+        if pending.workspace_id != workspace_id {
+            self.state.toast = Some(crate::app::state::ToastNotification {
+                kind: crate::app::state::ToastKind::Warning,
+                title: "Can't swap across workspaces".into(),
+                context: "Switch back to the marked pane's workspace to finish the swap.".into(),
+                position: None,
+                target: None,
+            });
+            return;
+        }
+        let Some(target_tab_idx) = self.state.workspaces[ws_idx].find_tab_index_for_pane(pane_id)
+        else {
+            return;
+        };
+        let Some(source_pane_id) = self.public_pane_id(ws_idx, pending.pane_id) else {
+            return;
+        };
+        let Some(target_pane_id) = self.public_pane_id(ws_idx, pane_id) else {
+            return;
+        };
+
+        self.runtime_pane_swap(
+            "tui.pane.swap_exact",
+            crate::api::schema::PaneSwapParams {
+                pane_id: None,
+                direction: None,
+                source_pane_id: Some(source_pane_id),
+                target_pane_id: Some(target_pane_id),
+            },
+        );
+
+        // Confirm the swap actually landed (source now occupies target's old
+        // tab) before clearing the mark; on failure the mark stays armed.
+        let swapped = self.state.workspaces[ws_idx].find_tab_index_for_pane(pending.pane_id)
+            == Some(target_tab_idx);
+        if swapped {
+            self.state.pending_pane_swap = None;
+        }
     }
 
     pub(crate) fn split_focused_pane_via_api(
@@ -1400,6 +1502,9 @@ pub(crate) enum NavigateAction {
     SwapPaneDown,
     SwapPaneUp,
     SwapPaneRight,
+    MarkPane,
+    UnmarkPane,
+    SwapMarkedPane,
     SplitVertical,
     SplitHorizontal,
     ClosePane,
@@ -1547,6 +1652,9 @@ fn non_indexed_action_for_key(
         (&kb.swap_pane_down, NavigateAction::SwapPaneDown),
         (&kb.swap_pane_up, NavigateAction::SwapPaneUp),
         (&kb.swap_pane_right, NavigateAction::SwapPaneRight),
+        (&kb.mark_pane, NavigateAction::MarkPane),
+        (&kb.unmark_pane, NavigateAction::UnmarkPane),
+        (&kb.swap_marked_pane, NavigateAction::SwapMarkedPane),
         (&kb.last_pane, NavigateAction::LastPane),
         (&kb.cycle_pane_next, NavigateAction::CyclePaneNext),
         (&kb.cycle_pane_previous, NavigateAction::CyclePanePrevious),
@@ -1772,6 +1880,18 @@ pub(super) fn execute_navigate_action_in_context(
         }
         NavigateAction::SwapPaneRight => {
             state.swap_pane(NavDirection::Right);
+            leave_navigate_mode(state);
+        }
+        NavigateAction::MarkPane => {
+            state.mark_pane();
+            leave_navigate_mode(state);
+        }
+        NavigateAction::UnmarkPane => {
+            state.pending_pane_swap = None;
+            leave_navigate_mode(state);
+        }
+        NavigateAction::SwapMarkedPane => {
+            state.swap_marked_pane();
             leave_navigate_mode(state);
         }
         NavigateAction::SplitVertical => {

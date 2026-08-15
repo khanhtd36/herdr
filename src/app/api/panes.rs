@@ -452,7 +452,7 @@ impl App {
             );
         }
 
-        let (ws_idx, tab_idx, source_pane_id, target_pane_id, reason) = if let Some(direction) =
+        let (ws_idx, mut tab_idx, source_pane_id, target_pane_id, reason) = if let Some(direction) =
             params.direction
         {
             let Some((ws_idx, source_pane_id)) =
@@ -530,10 +530,8 @@ impl App {
                 (Some((_, _, source)), Some((_, _, target))) if source == target => {
                     Some(PaneSwapReason::SamePane)
                 }
-                (Some((source_ws, source_tab, _)), Some((target_ws, target_tab, _)))
-                    if source_ws != target_ws || source_tab != target_tab =>
-                {
-                    Some(PaneSwapReason::CrossTab)
+                (Some((source_ws, _, _)), Some((target_ws, _, _))) if source_ws != target_ws => {
+                    Some(PaneSwapReason::CrossWorkspace)
                 }
                 _ => None,
             };
@@ -544,15 +542,27 @@ impl App {
         if reason.is_none() {
             if let Some(target_pane_id) = target_pane_id {
                 let previous_focus = self.state.current_pane_focus_target();
-                if let Some(tab) = self
-                    .state
-                    .workspaces
-                    .get_mut(ws_idx)
-                    .and_then(|ws| ws.tabs.get_mut(tab_idx))
-                {
-                    changed = tab.layout.swap_panes(source_pane_id, target_pane_id);
-                    tab.layout.focus_pane(source_pane_id);
+                // The swap may land the source pane in a different tab than
+                // `tab_idx` (cross-tab swap); report from wherever it ends
+                // up, since that's the tab the caller is now looking at.
+                let landing_tab_idx = self.state.workspaces.get_mut(ws_idx).map(|ws| {
+                    let swapped = ws.swap_panes(source_pane_id, target_pane_id);
+                    (swapped, ws.find_tab_index_for_pane(source_pane_id))
+                });
+                if let Some((swapped, source_tab_idx)) = landing_tab_idx {
+                    changed = swapped;
                     if changed {
+                        if let Some(source_tab_idx) = source_tab_idx {
+                            if let Some(tab) = self
+                                .state
+                                .workspaces
+                                .get_mut(ws_idx)
+                                .and_then(|ws| ws.tabs.get_mut(source_tab_idx))
+                            {
+                                tab.layout.focus_pane(source_pane_id);
+                            }
+                            tab_idx = source_tab_idx;
+                        }
                         self.state.switch_workspace_tab(ws_idx, tab_idx);
                         self.state
                             .record_pane_focus_change(previous_focus, ws_idx, source_pane_id);
@@ -2519,10 +2529,52 @@ mod tests {
             panic!("expected pane swap response");
         };
         assert!(!swap.changed);
-        assert_eq!(swap.reason, Some(PaneSwapReason::CrossTab));
+        assert_eq!(swap.reason, Some(PaneSwapReason::CrossWorkspace));
         assert_eq!(swap.source_pane_id, source_public);
         assert_eq!(swap.target_pane_id, Some(target_public));
         assert_eq!(swap.layout.workspace_id, app.public_workspace_id(0));
+    }
+
+    #[test]
+    fn api_pane_swap_explicit_cross_tab_same_workspace_swaps_tab_membership() {
+        let mut app = app_with_linked_worktree();
+        let source_tab = app.state.workspaces[0].test_add_tab(None);
+        let target_tab = app.state.workspaces[0].test_add_tab(None);
+        let source = app.state.workspaces[0].tabs[source_tab].root_pane;
+        let target = app.state.workspaces[0].tabs[target_tab].root_pane;
+        let source_public = app.public_pane_id(0, source).unwrap();
+        let target_public = app.public_pane_id(0, target).unwrap();
+
+        let response = app.handle_pane_swap(
+            "req".into(),
+            PaneSwapParams {
+                source_pane_id: Some(source_public.clone()),
+                target_pane_id: Some(target_public.clone()),
+                ..PaneSwapParams::default()
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::PaneSwap { swap } = success.result else {
+            panic!("expected pane swap response");
+        };
+        assert!(swap.changed);
+        assert_eq!(swap.reason, None);
+        assert_eq!(swap.source_pane_id, source_public);
+        assert_eq!(swap.target_pane_id, Some(target_public));
+        // Source pane now lives in what was the target's tab, and vice
+        // versa; each tab's anchor (root_pane) follows the new occupant.
+        assert_eq!(
+            app.state.workspaces[0].find_tab_index_for_pane(source),
+            Some(target_tab)
+        );
+        assert_eq!(
+            app.state.workspaces[0].find_tab_index_for_pane(target),
+            Some(source_tab)
+        );
+        assert_eq!(app.state.workspaces[0].tabs[target_tab].root_pane, source);
+        assert_eq!(app.state.workspaces[0].tabs[source_tab].root_pane, target);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), target_tab);
     }
 
     #[test]

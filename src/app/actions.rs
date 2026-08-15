@@ -15,6 +15,8 @@ use crate::terminal::{EffectiveStateChange, TerminalStateMutation};
 use crate::workspace::WorkspaceGitStatus;
 
 use super::api_helpers::pane_agent_status;
+#[cfg(test)]
+use super::state::PendingPaneSwap;
 use super::state::{
     navigator_display_index_of_row, navigator_display_lines, navigator_first_row_at_or_after,
     text_matches_query, AgentNotificationDelivery, AppState, Mode, NavigatorRow,
@@ -199,6 +201,7 @@ fn toast_event_text(kind: ToastKind) -> &'static str {
         ToastKind::NeedsAttention => "needs attention",
         ToastKind::Finished => "finished",
         ToastKind::UpdateInstalled => "updated",
+        ToastKind::Warning => "warning",
     }
 }
 
@@ -211,7 +214,7 @@ fn sound_for_toast_kind(
         ToastKind::Finished if !suppress_active_tab_notifications => {
             Some(crate::sound::Sound::Done)
         }
-        ToastKind::Finished | ToastKind::UpdateInstalled => None,
+        ToastKind::Finished | ToastKind::UpdateInstalled | ToastKind::Warning => None,
     }
 }
 
@@ -1870,6 +1873,84 @@ impl AppState {
             return false;
         };
         if tab.layout.swap_panes(source, target) {
+            self.mark_session_dirty();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Direct-state counterpart to `App::mark_pane` for tests that don't go
+    /// through the runtime/API layer. Always sets the mark (overwrites any
+    /// existing one) — mirrors tmux's `select-pane -m`, not a toggle.
+    #[cfg(test)]
+    pub fn mark_pane(&mut self) -> bool {
+        let Some(ws_idx) = self.active else {
+            return false;
+        };
+        let Some(pane_id) = self
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.focused_pane_id())
+        else {
+            return false;
+        };
+        let Some(workspace_id) = self.workspaces.get(ws_idx).map(|ws| ws.id.clone()) else {
+            return false;
+        };
+        self.pending_pane_swap = Some(PendingPaneSwap {
+            workspace_id,
+            pane_id,
+        });
+        true
+    }
+
+    /// Direct-state counterpart to `App::swap_marked_pane` for tests that
+    /// don't go through the runtime/API layer. Same keep-mark-on-failure
+    /// contract; see the production method for behavior notes.
+    #[cfg(test)]
+    pub fn swap_marked_pane(&mut self) -> bool {
+        let Some(pending) = self.pending_pane_swap.clone() else {
+            return false;
+        };
+        let armed_still_live = self
+            .workspaces
+            .iter()
+            .any(|ws| ws.find_tab_index_for_pane(pending.pane_id).is_some());
+        if !armed_still_live {
+            self.pending_pane_swap = None;
+            return false;
+        }
+
+        let Some(ws_idx) = self.active else {
+            return false;
+        };
+        let Some(pane_id) = self
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.focused_pane_id())
+        else {
+            return false;
+        };
+        if pending.pane_id == pane_id {
+            return false;
+        }
+        let Some(workspace_id) = self.workspaces.get(ws_idx).map(|ws| ws.id.clone()) else {
+            return false;
+        };
+        if pending.workspace_id != workspace_id {
+            self.toast = Some(ToastNotification {
+                kind: ToastKind::Warning,
+                title: "Can't swap across workspaces".into(),
+                context: "Switch back to the marked pane's workspace to finish the swap.".into(),
+                position: None,
+                target: None,
+            });
+            return false;
+        }
+
+        if self.workspaces[ws_idx].swap_panes(pending.pane_id, pane_id) {
+            self.pending_pane_swap = None;
             self.mark_session_dirty();
             true
         } else {
@@ -6082,5 +6163,134 @@ mod tests {
         assert!(!deferred);
         assert_eq!(state.workspaces.len(), 1);
         assert_eq!(state.workspaces[0].display_name(), "notes");
+    }
+
+    #[test]
+    fn mark_then_swap_marked_pane_within_same_tab() {
+        let mut state = app_with_workspaces(&["ws"]);
+        let source = state.workspaces[0].tabs[0].root_pane;
+        let target = state.workspaces[0].test_split(Direction::Horizontal);
+        state.workspaces[0].tabs[0].layout.focus_pane(source);
+
+        assert!(state.mark_pane());
+        assert!(state.pending_pane_swap.is_some());
+
+        state.workspaces[0].tabs[0].layout.focus_pane(target);
+        assert!(state.swap_marked_pane());
+
+        assert!(state.pending_pane_swap.is_none());
+        assert_eq!(state.workspaces[0].tabs[0].layout.pane_ids().len(), 2);
+        assert!(state.workspaces[0].tabs[0]
+            .layout
+            .pane_ids()
+            .contains(&source));
+    }
+
+    #[test]
+    fn mark_pane_always_sets_mark_not_a_toggle() {
+        let mut state = app_with_workspaces(&["ws"]);
+        let first = state.workspaces[0].tabs[0].root_pane;
+        let second = state.workspaces[0].test_split(Direction::Horizontal);
+
+        state.workspaces[0].tabs[0].layout.focus_pane(first);
+        assert!(state.mark_pane());
+        assert_eq!(
+            state.pending_pane_swap.as_ref().map(|p| p.pane_id),
+            Some(first)
+        );
+
+        // Marking again — even on the same pane — never cancels; it's not a
+        // toggle. Marking a different pane overwrites the previous mark.
+        state.workspaces[0].tabs[0].layout.focus_pane(second);
+        assert!(state.mark_pane());
+        assert_eq!(
+            state.pending_pane_swap.as_ref().map(|p| p.pane_id),
+            Some(second)
+        );
+    }
+
+    #[test]
+    fn swap_marked_pane_same_pane_is_a_noop_and_keeps_mark() {
+        let mut state = app_with_workspaces(&["ws"]);
+        let source = state.workspaces[0].tabs[0].root_pane;
+        state.workspaces[0].tabs[0].layout.focus_pane(source);
+
+        assert!(state.mark_pane());
+        // Confirming against the very same (still-focused) pane: no-op,
+        // mark stays armed — unmarking is now a separate, explicit action.
+        assert!(!state.swap_marked_pane());
+        assert!(state.pending_pane_swap.is_some());
+    }
+
+    #[test]
+    fn unmark_pane_clears_regardless_of_focus_or_workspace() {
+        let mut state = app_with_workspaces(&["ws-a", "ws-b"]);
+        assert!(state.mark_pane());
+        assert!(state.pending_pane_swap.is_some());
+
+        // Switch workspace before unmarking — clearing needs no proximity to
+        // the marked pane at all.
+        state.active = Some(1);
+        state.pending_pane_swap = None;
+
+        assert!(state.pending_pane_swap.is_none());
+    }
+
+    #[test]
+    fn swap_marked_pane_swaps_across_tabs_in_same_workspace() {
+        let mut state = app_with_workspaces(&["ws"]);
+        let source_tab = 0;
+        let target_tab = state.workspaces[0].test_add_tab(None);
+        let source = state.workspaces[0].tabs[source_tab].root_pane;
+        let target = state.workspaces[0].tabs[target_tab].root_pane;
+
+        assert!(state.mark_pane());
+        state.workspaces[0].switch_tab(target_tab);
+        assert!(state.swap_marked_pane());
+
+        assert!(state.pending_pane_swap.is_none());
+        assert_eq!(
+            state.workspaces[0].find_tab_index_for_pane(source),
+            Some(target_tab)
+        );
+        assert_eq!(
+            state.workspaces[0].find_tab_index_for_pane(target),
+            Some(source_tab)
+        );
+    }
+
+    #[test]
+    fn swap_marked_pane_warns_and_stays_armed_across_workspace() {
+        let mut state = app_with_workspaces(&["ws-a", "ws-b"]);
+        let marked = state.workspaces[0].tabs[0].root_pane;
+
+        assert!(state.mark_pane());
+        state.active = Some(1);
+
+        assert!(!state.swap_marked_pane());
+
+        assert_eq!(
+            state.pending_pane_swap.as_ref().map(|p| p.pane_id),
+            Some(marked)
+        );
+        let toast = state.toast.expect("cross-workspace attempt shows a toast");
+        assert_eq!(toast.kind, ToastKind::Warning);
+    }
+
+    #[test]
+    fn swap_marked_pane_drops_stale_mark_when_marked_pane_closed() {
+        let mut state = app_with_workspaces(&["ws"]);
+        let source = state.workspaces[0].tabs[0].root_pane;
+        let other = state.workspaces[0].test_split(Direction::Horizontal);
+        state.workspaces[0].tabs[0].layout.focus_pane(source);
+        assert!(state.mark_pane());
+
+        state.workspaces[0].close_pane(source);
+        state.workspaces[0].tabs[0].layout.focus_pane(other);
+
+        // Marked pane is gone: confirming drops the stale mark silently
+        // instead of attempting a swap against a closed pane.
+        assert!(!state.swap_marked_pane());
+        assert!(state.pending_pane_swap.is_none());
     }
 }

@@ -344,6 +344,9 @@ pub struct Keybinds {
     pub swap_pane_down: ActionKeybinds,
     pub swap_pane_up: ActionKeybinds,
     pub swap_pane_right: ActionKeybinds,
+    pub mark_pane: ActionKeybinds,
+    pub unmark_pane: ActionKeybinds,
+    pub swap_marked_pane: ActionKeybinds,
     pub cycle_pane_next: ActionKeybinds,
     pub cycle_pane_previous: ActionKeybinds,
     pub last_pane: ActionKeybinds,
@@ -508,6 +511,9 @@ impl Config {
             swap_pane_down: empty_action!(),
             swap_pane_up: empty_action!(),
             swap_pane_right: empty_action!(),
+            mark_pane: empty_action!(),
+            unmark_pane: empty_action!(),
+            swap_marked_pane: empty_action!(),
             cycle_pane_next: empty_action!(),
             cycle_pane_previous: empty_action!(),
             last_pane: empty_action!(),
@@ -651,6 +657,9 @@ impl Config {
             apply_action!(keybinds.swap_pane_down, swap_pane_down, source);
             apply_action!(keybinds.swap_pane_up, swap_pane_up, source);
             apply_action!(keybinds.swap_pane_right, swap_pane_right, source);
+            apply_action!(keybinds.mark_pane, mark_pane, source);
+            apply_action!(keybinds.unmark_pane, unmark_pane, source);
+            apply_action!(keybinds.swap_marked_pane, swap_marked_pane, source);
             apply_action!(keybinds.last_pane, last_pane, source);
             apply_action!(keybinds.cycle_pane_next, cycle_pane_next, source);
             apply_action!(keybinds.cycle_pane_previous, cycle_pane_previous, source);

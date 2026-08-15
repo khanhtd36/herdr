@@ -473,6 +473,15 @@ pub struct KeysConfig {
     pub swap_pane_up: BindingConfig,
     /// Swap the focused pane with the pane to the right. Default: "prefix+shift+l".
     pub swap_pane_right: BindingConfig,
+    /// Mark the focused pane for a swap, overwriting any existing mark.
+    /// Default: "prefix+m".
+    pub mark_pane: BindingConfig,
+    /// Clear the marked pane, regardless of focus or workspace.
+    /// Default: "prefix+shift+m".
+    pub unmark_pane: BindingConfig,
+    /// Swap the marked pane with the focused pane (same tab or another tab
+    /// in this workspace). Default: "prefix+shift+s".
+    pub swap_marked_pane: BindingConfig,
     /// Cycle to the next pane. Default: "prefix+tab".
     pub cycle_pane_next: BindingConfig,
     /// Cycle to the previous pane. Default: "prefix+shift+tab".
@@ -597,6 +606,12 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     swap_pane_right: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    mark_pane: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unmark_pane: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    swap_marked_pane: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     cycle_pane_next: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cycle_pane_previous: Option<BindingConfig>,
@@ -683,6 +698,9 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(swap_pane_down);
         apply_field!(swap_pane_up);
         apply_field!(swap_pane_right);
+        apply_field!(mark_pane);
+        apply_field!(unmark_pane);
+        apply_field!(swap_marked_pane);
         apply_field!(cycle_pane_next);
         apply_field!(cycle_pane_previous);
         apply_field!(last_pane);
@@ -783,6 +801,9 @@ impl KeysConfig {
         copy_effective_action_field!(swap_pane_down, keybinds.swap_pane_down);
         copy_effective_action_field!(swap_pane_up, keybinds.swap_pane_up);
         copy_effective_action_field!(swap_pane_right, keybinds.swap_pane_right);
+        copy_effective_action_field!(mark_pane, keybinds.mark_pane);
+        copy_effective_action_field!(unmark_pane, keybinds.unmark_pane);
+        copy_effective_action_field!(swap_marked_pane, keybinds.swap_marked_pane);
         copy_effective_action_field!(cycle_pane_next, keybinds.cycle_pane_next);
         copy_effective_action_field!(cycle_pane_previous, keybinds.cycle_pane_previous);
         copy_effective_action_field!(last_pane, keybinds.last_pane);
@@ -1071,6 +1092,9 @@ impl Default for KeysConfig {
             swap_pane_down: BindingConfig::one("prefix+shift+j"),
             swap_pane_up: BindingConfig::one("prefix+shift+k"),
             swap_pane_right: BindingConfig::one("prefix+shift+l"),
+            mark_pane: BindingConfig::one("prefix+m"),
+            unmark_pane: BindingConfig::one("prefix+shift+m"),
+            swap_marked_pane: BindingConfig::one("prefix+shift+s"),
             cycle_pane_next: BindingConfig::one("prefix+tab"),
             cycle_pane_previous: BindingConfig::one("prefix+shift+tab"),
             last_pane: BindingConfig::empty(),

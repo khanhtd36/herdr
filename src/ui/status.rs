@@ -91,6 +91,7 @@ pub(super) fn render_toast_notification(
         ToastKind::NeedsAttention => p.red,
         ToastKind::Finished => p.blue,
         ToastKind::UpdateInstalled => p.accent,
+        ToastKind::Warning => p.peach,
     };
     let toast_area = toast_notification_rect(area, toast, offset_for_warning, position);
 

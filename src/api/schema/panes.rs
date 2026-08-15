@@ -482,7 +482,7 @@ pub enum PaneSwapReason {
     NoNeighbor,
     SamePane,
     NotFound,
-    CrossTab,
+    CrossWorkspace,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
