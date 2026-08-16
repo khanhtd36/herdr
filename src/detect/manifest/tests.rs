@@ -626,6 +626,21 @@ fn claude_osc_title_braille_prefix_is_working() {
 }
 
 #[test]
+fn claude_osc_title_half_circle_frames_are_working() {
+    for frame in ['◐', '◓', '◑', '◒'] {
+        let title = format!("{frame} Initial conversation with Claude");
+        let result = osc_explain(Agent::Claude, "", &title, "");
+        assert_eq!(result.state, AgentState::Working, "frame {frame}");
+        assert_eq!(
+            result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+            Some("osc_title_working"),
+            "frame {frame}"
+        );
+        assert!(result.visible_working, "frame {frame}");
+    }
+}
+
+#[test]
 fn claude_osc_title_static_prefix_is_idle() {
     // "✳" is U+2733, static prefix when Claude is not working
     let result = osc_explain(Agent::Claude, "", "✳ Claude Code", "");

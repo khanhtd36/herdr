@@ -130,6 +130,8 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Accepts: hex (#rrggbb), named colors, rgb(r,g,b), or panel_bg = "reset"
 # [theme.custom]
 # sidebar_bg = "#181825"
+# active_row_bg = "#1e1e2e"
+# selection_bg = "#313244"
 # panel_bg = "reset"
 # accent = "#f5c2e7"
 # red = "#ff6188"
@@ -254,6 +256,12 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # tabs = ""       # e.g. "ctrl" makes ctrl+1..9 switch tabs directly
 # workspaces = "" # e.g. "ctrl+shift" makes ctrl+shift+1..9 switch workspaces directly
 # agents = ""     # e.g. "alt" makes alt+1..9 focus agent rows directly
+
+# Size of the virtual terminal used when no client is attached.
+# Attached clients always use their own terminal size.
+[server]
+# headless_cols = 120
+# headless_rows = 40
 
 # [worktrees]
 # directory = "~/.herdr/worktrees"
@@ -727,7 +735,8 @@ fn main() -> io::Result<()> {
         println!("Logs:   {}", logging::help_log_paths_summary());
         println!("Env:    HERDR_CONFIG_PATH overrides config file path");
         println!("Home:   https://herdr.khanhtd36.dev");
-        println!("Skill:  herdr --skill prints agent instructions for driving herdr from a pane");
+        println!();
+        println!("{}", cli::AGENT_HELP_FOOTER);
         return Ok(());
     }
 

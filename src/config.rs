@@ -53,6 +53,8 @@ pub const CONFIG_PATH_ENV_VAR: &str = "HERDR_CONFIG_PATH";
 pub const DEFAULT_SCROLLBACK_LIMIT_BYTES: usize = 10_000_000;
 pub const DEFAULT_MOUSE_SCROLL_LINES: usize = 3;
 pub const DEFAULT_MOBILE_WIDTH_THRESHOLD: u16 = 64;
+pub const DEFAULT_HEADLESS_COLS: u16 = 120;
+pub const DEFAULT_HEADLESS_ROWS: u16 = 40;
 
 #[cfg(test)]
 pub(crate) fn app_dir_name() -> &'static str {
@@ -91,6 +93,7 @@ impl Config {
             .chain(window_title_diagnostics(&self.ui.window_title))
             .chain(self.invalid_sidebar_bounds_diagnostic())
             .chain(self.agent_resume_command_diagnostics())
+            .chain(self.invalid_headless_size_diagnostic())
             .collect()
     }
 
@@ -112,6 +115,23 @@ impl Config {
                 }
             })
             .collect()
+    }
+
+    pub(crate) fn headless_size(&self) -> (u16, u16) {
+        if self.invalid_headless_size_diagnostic().is_some() {
+            (DEFAULT_HEADLESS_COLS, DEFAULT_HEADLESS_ROWS)
+        } else {
+            (self.server.headless_cols, self.server.headless_rows)
+        }
+    }
+
+    pub(crate) fn invalid_headless_size_diagnostic(&self) -> Option<String> {
+        (self.server.headless_cols == 0 || self.server.headless_rows == 0).then(|| {
+            format!(
+                "server.headless_cols and server.headless_rows must be greater than zero (got {}x{})",
+                self.server.headless_cols, self.server.headless_rows
+            )
+        })
     }
 
     pub(crate) fn invalid_sidebar_bounds_diagnostic(&self) -> Option<String> {

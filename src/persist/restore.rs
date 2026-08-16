@@ -52,6 +52,22 @@ struct RestoreRuntimeContext<'a> {
     render_dirty: Arc<RenderSignal>,
 }
 
+/// Bundled inputs shared by the top-level restore entry points, so adding a
+/// new restore option doesn't grow the function signatures themselves.
+struct RestoreParams<'a> {
+    history: Option<&'a SessionHistorySnapshot>,
+    rows: u16,
+    cols: u16,
+    scrollback_limit_bytes: usize,
+    shell_config: crate::pane::PaneShellConfig<'a>,
+    resume_agents_on_restore: bool,
+    agent_resume_command: &'a HashMap<String, String>,
+    restore_running_commands: bool,
+    events: mpsc::Sender<AppEvent>,
+    render_notify: Arc<Notify>,
+    render_dirty: Arc<RenderSignal>,
+}
+
 type RestoredSession = (
     Vec<Workspace>,
     HashMap<TerminalId, TerminalState>,
@@ -71,6 +87,7 @@ type RestoredTab = (
 type RestoreFailures<T> = (T, usize);
 
 /// Restore workspaces from a snapshot. Each pane gets a fresh shell in its saved cwd.
+#[allow(clippy::too_many_arguments)] // bundling would just move the same inputs into RestoreParams at the call site
 pub fn restore(
     snapshot: &SessionSnapshot,
     history: Option<&SessionHistorySnapshot>,
@@ -87,24 +104,24 @@ pub fn restore(
     render_dirty: Arc<RenderSignal>,
 ) -> RestoredSession {
     let mut imported_panes = HashMap::new();
-    restore_with_imports(
-        snapshot,
+    let params = RestoreParams {
         history,
         rows,
         cols,
         scrollback_limit_bytes,
-        crate::pane::PaneShellConfig::new(default_shell, shell_mode),
+        shell_config: crate::pane::PaneShellConfig::new(default_shell, shell_mode),
         resume_agents_on_restore,
         agent_resume_command,
         restore_running_commands,
-        &mut imported_panes,
         events,
         render_notify,
         render_dirty,
-    )
+    };
+    restore_with_imports(snapshot, &params, &mut imported_panes)
 }
 
 #[cfg(unix)]
+#[allow(clippy::too_many_arguments)] // bundling would just move the same inputs into RestoreParams at the call site
 pub fn restore_handoff(
     snapshot: &SessionSnapshot,
     scrollback_limit_bytes: usize,
@@ -116,23 +133,22 @@ pub fn restore_handoff(
     render_notify: Arc<Notify>,
     render_dirty: Arc<RenderSignal>,
 ) -> std::io::Result<RestoredSession> {
-    restore_with_imports_strict(
-        snapshot,
-        None,
-        24,
-        80,
+    let params = RestoreParams {
+        history: None,
+        rows: 24,
+        cols: 80,
         scrollback_limit_bytes,
-        crate::pane::PaneShellConfig::new(default_shell, shell_mode),
-        true,
+        shell_config: crate::pane::PaneShellConfig::new(default_shell, shell_mode),
+        resume_agents_on_restore: true,
         agent_resume_command,
         // Handoff keeps the process alive (fd transfer); there is nothing to
         // rerun, so this option never applies on the handoff path.
-        false,
-        imports,
+        restore_running_commands: false,
         events,
         render_notify,
         render_dirty,
-    )
+    };
+    restore_with_imports_strict(snapshot, &params, imports)
 }
 
 #[cfg(unix)]
@@ -205,34 +221,11 @@ fn collect_layout_snapshot_pane_ids(node: &LayoutSnapshot, ids: &mut Vec<u32>) {
 #[cfg(unix)]
 fn restore_with_imports_strict(
     snapshot: &SessionSnapshot,
-    history: Option<&SessionHistorySnapshot>,
-    rows: u16,
-    cols: u16,
-    scrollback_limit_bytes: usize,
-    shell_config: crate::pane::PaneShellConfig<'_>,
-    resume_agents_on_restore: bool,
-    agent_resume_command: &HashMap<String, String>,
-    restore_running_commands: bool,
+    params: &RestoreParams<'_>,
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
-    events: mpsc::Sender<AppEvent>,
-    render_notify: Arc<Notify>,
-    render_dirty: Arc<RenderSignal>,
 ) -> std::io::Result<RestoredSession> {
-    let (restored, failed_imports) = restore_with_imports_and_failures(
-        snapshot,
-        history,
-        rows,
-        cols,
-        scrollback_limit_bytes,
-        shell_config,
-        resume_agents_on_restore,
-        agent_resume_command,
-        restore_running_commands,
-        imported_panes,
-        events,
-        render_notify,
-        render_dirty,
-    );
+    let (restored, failed_imports) =
+        restore_with_imports_and_failures(snapshot, params, imported_panes);
     if failed_imports > 0 {
         return Err(std::io::Error::other(format!(
             "handoff failed to restore {failed_imports} imported pane runtime(s)"
@@ -249,51 +242,16 @@ fn restore_with_imports_strict(
 
 fn restore_with_imports(
     snapshot: &SessionSnapshot,
-    history: Option<&SessionHistorySnapshot>,
-    rows: u16,
-    cols: u16,
-    scrollback_limit_bytes: usize,
-    shell_config: crate::pane::PaneShellConfig<'_>,
-    resume_agents_on_restore: bool,
-    agent_resume_command: &HashMap<String, String>,
-    restore_running_commands: bool,
+    params: &RestoreParams<'_>,
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
-    events: mpsc::Sender<AppEvent>,
-    render_notify: Arc<Notify>,
-    render_dirty: Arc<RenderSignal>,
 ) -> RestoredSession {
-    restore_with_imports_and_failures(
-        snapshot,
-        history,
-        rows,
-        cols,
-        scrollback_limit_bytes,
-        shell_config,
-        resume_agents_on_restore,
-        agent_resume_command,
-        restore_running_commands,
-        imported_panes,
-        events,
-        render_notify,
-        render_dirty,
-    )
-    .0
+    restore_with_imports_and_failures(snapshot, params, imported_panes).0
 }
 
 fn restore_with_imports_and_failures(
     snapshot: &SessionSnapshot,
-    history: Option<&SessionHistorySnapshot>,
-    rows: u16,
-    cols: u16,
-    scrollback_limit_bytes: usize,
-    shell_config: crate::pane::PaneShellConfig<'_>,
-    resume_agents_on_restore: bool,
-    agent_resume_command: &HashMap<String, String>,
-    restore_running_commands: bool,
+    params: &RestoreParams<'_>,
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
-    events: mpsc::Sender<AppEvent>,
-    render_notify: Arc<Notify>,
-    render_dirty: Arc<RenderSignal>,
 ) -> RestoreFailures<RestoredSession> {
     let mut workspaces = Vec::new();
     let mut terminals = HashMap::new();
@@ -302,20 +260,22 @@ fn restore_with_imports_and_failures(
     let mut failed_imports = 0;
     for (idx, ws_snap) in snapshot.workspaces.iter().enumerate() {
         let runtime_context = RestoreRuntimeContext {
-            scrollback_limit_bytes,
-            shell_config,
-            resume_agents_on_restore,
-            agent_resume_command,
-            restore_running_commands,
-            events: events.clone(),
-            render_notify: render_notify.clone(),
-            render_dirty: render_dirty.clone(),
+            scrollback_limit_bytes: params.scrollback_limit_bytes,
+            shell_config: params.shell_config,
+            resume_agents_on_restore: params.resume_agents_on_restore,
+            agent_resume_command: params.agent_resume_command,
+            restore_running_commands: params.restore_running_commands,
+            events: params.events.clone(),
+            render_notify: params.render_notify.clone(),
+            render_dirty: params.render_dirty.clone(),
         };
         let (restored, workspace_failed_imports) = restore_workspace(
             ws_snap,
-            history.and_then(|history| history.workspaces.get(idx)),
-            rows,
-            cols,
+            params
+                .history
+                .and_then(|history| history.workspaces.get(idx)),
+            params.rows,
+            params.cols,
             &runtime_context,
             &mut resumed_agent_sessions,
             imported_panes,

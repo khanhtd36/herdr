@@ -362,6 +362,10 @@ pub(crate) fn should_draw_host_cursor_by_default() -> bool {
     true
 }
 
+pub(crate) fn should_query_host_terminal_palette() -> bool {
+    false
+}
+
 /// The machine's node name, as shown by tmux's `#h`.
 pub(crate) fn hostname() -> Option<String> {
     std::env::var("COMPUTERNAME")

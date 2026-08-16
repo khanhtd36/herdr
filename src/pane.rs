@@ -1077,6 +1077,7 @@ pub struct PaneRuntime {
     reported_cwd: Arc<Mutex<Option<std::path::PathBuf>>>,
     child_wait_completed: Option<Arc<AtomicBool>>,
     kitty_keyboard_flags: Arc<AtomicU16>,
+    content_seq: Arc<AtomicU64>,
     detection_content_seq: Arc<AtomicU64>,
     full_lifecycle_authority_active: Arc<AtomicBool>,
     detect_reset_notify: Arc<Notify>,
@@ -1953,6 +1954,7 @@ impl PaneRuntime {
         let child_pid = Arc::new(AtomicU32::new(child_pid));
         let reported_cwd = Arc::new(Mutex::new(None));
         let kitty_keyboard_flags = Arc::new(AtomicU16::new(keyboard_protocol_flags));
+        let content_seq = Arc::new(AtomicU64::new(0));
         let detection_content_seq = Arc::new(AtomicU64::new(0));
 
         let io = {
@@ -1960,6 +1962,7 @@ impl PaneRuntime {
             let response_writer = response_tx.clone();
             let render_notify = render_notify.clone();
             let render_dirty = render_dirty.clone();
+            let content_seq = content_seq.clone();
             let detection_content_seq = detection_content_seq.clone();
             let child_pid = child_pid.clone();
             let read_events = events.clone();
@@ -1967,9 +1970,11 @@ impl PaneRuntime {
             let rt = tokio::runtime::Handle::current();
             let delay_rt = rt.clone();
             let on_read = Box::new(move |bytes: &[u8]| {
+                content_seq.fetch_add(1, Ordering::AcqRel);
                 let shell_pid = child_pid.load(Ordering::Acquire);
                 let result =
                     terminal.process_pty_bytes(pane_id, shell_pid, bytes, &response_writer);
+                content_seq.fetch_add(1, Ordering::Release);
                 publish_terminal_bells(pane_id, result.terminal_bells, &read_events);
                 observe_detection_content_change(bytes, &detection_content_seq);
                 let title_requested =
@@ -2037,6 +2042,7 @@ impl PaneRuntime {
             reported_cwd,
             child_wait_completed: None,
             kitty_keyboard_flags,
+            content_seq,
             detection_content_seq,
             full_lifecycle_authority_active,
             detect_reset_notify,
@@ -2092,6 +2098,7 @@ impl PaneRuntime {
         let child_pid = Arc::new(AtomicU32::new(0));
         let reported_cwd = Arc::new(Mutex::new(None));
         let child_wait_completed = Arc::new(AtomicBool::new(false));
+        let content_seq = Arc::new(AtomicU64::new(0));
         let detection_content_seq = Arc::new(AtomicU64::new(0));
         let full_lifecycle_authority_active = Arc::new(AtomicBool::new(false));
         {
@@ -2125,15 +2132,18 @@ impl PaneRuntime {
             let response_writer = response_tx.clone();
             let render_notify = render_notify.clone();
             let render_dirty = render_dirty.clone();
+            let content_seq = content_seq.clone();
             let detection_content_seq = detection_content_seq.clone();
             let child_pid = child_pid.clone();
             let events = events.clone();
             let reported_cwd = reported_cwd.clone();
             let rt = tokio::runtime::Handle::current();
             let on_read = Box::new(move |bytes: &[u8]| {
+                content_seq.fetch_add(1, Ordering::AcqRel);
                 let shell_pid = child_pid.load(Ordering::Acquire);
                 let result =
                     terminal.process_pty_bytes(pane_id, shell_pid, bytes, &response_writer);
+                content_seq.fetch_add(1, Ordering::Release);
                 publish_terminal_bells(pane_id, result.terminal_bells, &events);
                 if agent_detection == AgentDetection::Enabled {
                     observe_detection_content_change(bytes, &detection_content_seq);
@@ -2621,6 +2631,7 @@ impl PaneRuntime {
             reported_cwd,
             child_wait_completed: Some(child_wait_completed),
             kitty_keyboard_flags,
+            content_seq,
             detection_content_seq,
             full_lifecycle_authority_active,
             detect_reset_notify,
@@ -2666,6 +2677,10 @@ impl PaneRuntime {
     pub(crate) fn current_size(&self) -> (u16, u16) {
         let (rows, cols, _, _) = self.current_size.get();
         (rows, cols)
+    }
+
+    pub(crate) fn content_seq(&self) -> u64 {
+        self.content_seq.load(Ordering::Acquire)
     }
 
     /// Resize if the dimensions actually changed.
@@ -3077,8 +3092,10 @@ impl PaneRuntime {
     }
 
     pub(crate) fn test_process_pty_bytes(&self, bytes: &[u8]) {
+        self.content_seq.fetch_add(1, Ordering::AcqRel);
         let (tx, _rx) = mpsc::channel(1);
         let _ = self.terminal.process_pty_bytes(self.pane_id, 0, bytes, &tx);
+        self.content_seq.fetch_add(1, Ordering::Release);
     }
 
     pub(crate) fn test_with_scrollback_bytes(
@@ -3118,6 +3135,7 @@ impl PaneRuntime {
                 reported_cwd: Arc::new(Mutex::new(None)),
                 child_wait_completed: None,
                 kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
+                content_seq: Arc::new(AtomicU64::new(0)),
                 detection_content_seq: Arc::new(AtomicU64::new(0)),
                 full_lifecycle_authority_active: Arc::new(AtomicBool::new(false)),
                 detect_reset_notify: Arc::new(Notify::new()),
@@ -3672,6 +3690,7 @@ mod tests {
             reported_cwd: Arc::new(Mutex::new(None)),
             child_wait_completed: None,
             kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
+            content_seq: Arc::new(AtomicU64::new(0)),
             detection_content_seq: Arc::new(AtomicU64::new(0)),
             full_lifecycle_authority_active: Arc::new(AtomicBool::new(false)),
             detect_reset_notify: Arc::new(Notify::new()),
@@ -3703,6 +3722,7 @@ mod tests {
             reported_cwd: Arc::new(Mutex::new(None)),
             child_wait_completed: None,
             kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
+            content_seq: Arc::new(AtomicU64::new(0)),
             detection_content_seq: Arc::new(AtomicU64::new(0)),
             full_lifecycle_authority_active: Arc::new(AtomicBool::new(false)),
             detect_reset_notify: Arc::new(Notify::new()),

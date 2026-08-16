@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- CLI help now points coding agents to Herdr's plain-text guide, documentation index, and built-in control skill.
 - Added Qwen Code detection for idle, working, and user-confirmation states, plus optional native session restore.
 - Herdr now keeps the outer terminal window title in sync with the session through `ui.window_title`, so window managers and terminal tab bars show the active workspace and the host the panes actually run on.
 - The desktop tab bar now has configurable right-aligned status entries for zoom state, hostname, date/time, literal text, and asynchronously refreshed command output.
@@ -12,16 +13,23 @@
 - Panes can now route normal right-click gestures to mouse-reporting applications through the pane menu, `herdr pane input`, `pane.input.set`, or the `pane split --right-click pane` launch option.
 - `theme.custom.sidebar_bg` can now give the desktop sidebar its own background without changing built-in theme defaults.
 - Settings and `ui.status_indicators = "symbols"` can now use distinct static shapes for blocked, working, done, idle, and unknown agent states. (#2260)
+- Navigate-mode selection rows now use a dedicated per-theme cursor color, customizable via `theme.custom.selection_bg`, so the cursor stays distinguishable from the active Space and Agent highlight.
 - The plugin marketplace now discovers valid manifests at repository roots and subdirectories, groups multiple plugins under each repository, and publishes their versions and exact default-branch commits.
 - `tab.default_split = "vertical"` or `"horizontal"` now splits every freshly created tab's starting pane automatically.
 - Added `[session] restore_running_commands`, allowing a non-agent pane's foreground command (e.g. a TUI like `lazygit`) to rerun after a Herdr server restart, when the pane was still running that command at shutdown. Off by default. Detecting arbitrary running commands is Linux/macOS only for now; Windows only detects recognized AI agents.
 
 ### Changed
+- Headless servers now use a configurable 120×40 virtual terminal instead of 80×24 when no client is attached, giving newly created panes a practical default size. (#2828)
 - Desktop tab labels are now centered in their tabs, so the active-tab highlight has symmetric padding.
 - Bumped the client/server protocol version to 20 for pane terminal bell forwarding.
 - Experimental pane graphics now support bounded named layers, acknowledged full-RGBA primary-layer direct file frames on audited local terminals, owned BGRA fallback, exact pixel mouse input, and placement-only resize replay.
 
 ### Fixed
+- Herdr no longer sends the full OSC 4 palette query burst under WSL, preventing reply fragments from leaking into the shell through ConPTY. (#2440)
+- Qwen Code panes now use locale-independent terminal-title states and localized confirmation fallbacks, preventing active or blocked turns from appearing idle. (#2756)
+- Closing a terminal running `herdr --remote` no longer produces a local client core dump while the remote session stays alive. (#2424)
+- Active Space and Agent rows now use dedicated theme colors that remain visible when the host terminal background matches the selected Herdr theme. (#2792)
+- `agent prompt` now rejects agents already waiting at approval or question dialogs with `agent_blocked`, without sending text or Enter. (#2788)
 - `prefix+e` now preserves logical lines when opening soft-wrapped scrollback in an editor. (#2733)
 - Tab bar clicks are now properly registered when using Ghostty in native fullscreen. (#796, #2736, thanks @HackAttack)
 - Prefix keybindings now disambiguate layout-aware shifted punctuation, so a shifted `\` no longer triggers `prefix+|` on keyboard layouts where the same key produces both characters. (#2674)

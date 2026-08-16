@@ -13,6 +13,24 @@
       ]
     },
     {
+      "id": "server",
+      "title": "Server",
+      "keys": [
+        {
+          "key": "server.headless_cols",
+          "type": "integer",
+          "default": "120",
+          "description": "Virtual terminal width used for layout and newly created panes when no client is attached. Must be greater than zero."
+        },
+        {
+          "key": "server.headless_rows",
+          "type": "integer",
+          "default": "40",
+          "description": "Virtual terminal height used for layout and newly created panes when no client is attached. Must be greater than zero."
+        }
+      ]
+    },
+    {
       "id": "theme",
       "title": "Theme",
       "keys": [
@@ -57,6 +75,18 @@
           "type": "color",
           "default": "unset",
           "description": "Set the desktop sidebar background without changing other panel surfaces. Accepts hex, named colors, rgb(r,g,b), or reset aliases."
+        },
+        {
+          "key": "theme.custom.active_row_bg",
+          "type": "color",
+          "default": "unset",
+          "description": "Set the active Space and focused Agent row background without changing separators or scrollbar tracks. Accepts hex, named colors, rgb(r,g,b), or reset aliases."
+        },
+        {
+          "key": "theme.custom.selection_bg",
+          "type": "color",
+          "default": "unset",
+          "description": "Set the Navigate-mode cursor row background in the sidebar without changing other selection surfaces. Accepts hex, named colors, rgb(r,g,b), or reset aliases."
         },
         {
           "key": "theme.custom.surface0",
