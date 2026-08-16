@@ -1060,36 +1060,71 @@ fn select_pane_foreground_job_from_snapshot_with_runtime_inspection(
     let shell = snapshot.entry(shell_pid)?;
     let descendants = descendant_entries(shell_pid, snapshot);
     let mut candidates = Vec::new();
-    for entry in std::iter::once(shell).chain(descendants) {
+    for entry in std::iter::once(shell).chain(descendants.iter().copied()) {
         if process_entry_identifies_agent(entry) {
             candidates.push(entry);
         }
     }
 
-    if let Some(selected) = select_topmost_agent_chain_candidate(&candidates, snapshot) {
+    if let Some(selected) = select_topmost_chain_candidate(&candidates, snapshot) {
         return Some(foreground_job_from_entry(selected));
     }
-    if !candidates.is_empty() || !shell_is_git_bash(shell) {
+    if !candidates.is_empty() {
         return Some(foreground_job_from_entry(shell));
     }
 
-    let escaped_agent_indices = snapshot.agent_indices();
-    if escaped_agent_indices.is_empty() {
-        return Some(foreground_job_from_entry(shell));
+    if shell_is_git_bash(shell) {
+        // Some agents detach from the shell's process tree on Git Bash panes
+        // (see the runtime marker env var). Look for a live escaped instance
+        // sharing this shell's marker before falling back further.
+        let escaped_agent_indices = snapshot.agent_indices();
+        if !escaped_agent_indices.is_empty() {
+            if let Some(shell_runtime_marker) =
+                runtime_marker(shell).filter(|marker| !marker.is_empty())
+            {
+                let matching_candidates: Vec<_> = escaped_agent_indices
+                    .iter()
+                    .map(|&index| &entries[index])
+                    .filter(|entry| {
+                        runtime_marker(entry).as_deref() == Some(shell_runtime_marker.as_str())
+                    })
+                    .collect();
+                if let Some(selected) =
+                    select_topmost_chain_candidate(&matching_candidates, snapshot)
+                {
+                    return Some(foreground_job_from_entry(selected));
+                }
+            }
+        }
     }
 
-    let Some(shell_runtime_marker) = runtime_marker(shell).filter(|marker| !marker.is_empty())
-    else {
-        return Some(foreground_job_from_entry(shell));
-    };
-    let matching_candidates: Vec<_> = escaped_agent_indices
+    // No recognized coding agent anywhere in reach. Windows has no
+    // tcgetpgrp()-equivalent way to ask ConPTY which descendant process is
+    // actually the interactive foreground one, so fall back to a heuristic
+    // guess: a single connected chain of live descendants is a strong
+    // signal (e.g. shell -> lazygit), and when multiple independent
+    // descendant branches exist (e.g. a background watcher plus an
+    // interactive command), prefer the most recently started one. This can
+    // still guess wrong; it only replaces the previous behavior of always
+    // reporting the idle shell for any non-agent foreground command.
+    if let Some(selected) = select_topmost_live_descendant(&descendants, snapshot) {
+        return Some(foreground_job_from_entry(selected));
+    }
+
+    Some(foreground_job_from_entry(shell))
+}
+
+fn select_topmost_live_descendant<'a>(
+    descendants: &[&'a WindowsProcessEntry],
+    snapshot: &ProcessSnapshot,
+) -> Option<&'a WindowsProcessEntry> {
+    if let Some(chain) = select_topmost_chain_candidate(descendants, snapshot) {
+        return Some(chain);
+    }
+    descendants
         .iter()
-        .map(|&index| &entries[index])
-        .filter(|entry| runtime_marker(entry).as_deref() == Some(shell_runtime_marker.as_str()))
-        .collect();
-    let selected =
-        select_topmost_agent_chain_candidate(&matching_candidates, snapshot).unwrap_or(shell);
-    Some(foreground_job_from_entry(selected))
+        .copied()
+        .max_by_key(|entry| entry.command().creation_time.unwrap_or(0))
 }
 
 #[cfg(test)]
@@ -1115,7 +1150,7 @@ fn foreground_job_from_entry(entry: &WindowsProcessEntry) -> ForegroundJob {
     }
 }
 
-fn select_topmost_agent_chain_candidate<'a>(
+fn select_topmost_chain_candidate<'a>(
     candidates: &[&'a WindowsProcessEntry],
     snapshot: &ProcessSnapshot,
 ) -> Option<&'a WindowsProcessEntry> {
@@ -3615,7 +3650,12 @@ mod tests {
     }
 
     #[test]
-    fn windows_process_tree_returns_shell_for_plain_descendant() {
+    fn windows_process_tree_selects_plain_descendant_as_foreground_guess() {
+        // Windows has no tcgetpgrp()-equivalent way to ask which descendant
+        // is the true console foreground process, so a lone live descendant
+        // that isn't a recognized coding agent (e.g. lazygit, vim) is still
+        // reported as the best-effort foreground guess instead of always
+        // falling back to the idle shell.
         let entries = vec![
             test_entry(10, 1, "powershell.exe", &["powershell.exe"]),
             test_entry(20, 10, "git.exe", &["git.exe", "status"]),
@@ -3623,8 +3663,36 @@ mod tests {
 
         let job = super::select_pane_foreground_job(10, &entries).unwrap();
 
+        assert_eq!(job.process_group_id, 20);
+        assert_eq!(job.processes[0].name, "git.exe");
+    }
+
+    #[test]
+    fn windows_process_tree_returns_shell_for_no_descendants() {
+        let entries = vec![test_entry(10, 1, "powershell.exe", &["powershell.exe"])];
+
+        let job = super::select_pane_foreground_job(10, &entries).unwrap();
+
         assert_eq!(job.process_group_id, 10);
         assert_eq!(job.processes[0].name, "powershell.exe");
+    }
+
+    #[test]
+    fn windows_process_tree_prefers_most_recently_started_descendant_when_ambiguous() {
+        // Two independent, unrelated descendant branches (e.g. a background
+        // watcher started earlier plus an interactive foreground command
+        // started later) can't be told apart by process-tree shape alone.
+        // Break the tie toward the most recently started one.
+        let entries = vec![
+            test_entry(10, 1, "powershell.exe", &["powershell.exe"]),
+            test_entry_with_creation_time(20, 10, "node.exe", &["node.exe", "watch"], Some(100)),
+            test_entry_with_creation_time(30, 10, "lazygit.exe", &["lazygit.exe"], Some(200)),
+        ];
+
+        let job = super::select_pane_foreground_job(10, &entries).unwrap();
+
+        assert_eq!(job.process_group_id, 30);
+        assert_eq!(job.processes[0].name, "lazygit.exe");
     }
 
     #[test]
