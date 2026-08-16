@@ -1118,8 +1118,23 @@ fn select_topmost_live_descendant<'a>(
     descendants: &[&'a WindowsProcessEntry],
     snapshot: &ProcessSnapshot,
 ) -> Option<&'a WindowsProcessEntry> {
-    if let Some(chain) = select_topmost_chain_candidate(descendants, snapshot) {
-        return Some(chain);
+    // select_topmost_chain_candidate only requires a common ancestor, not a
+    // single linear chain: for `shell -> cmd -> {watcher, lazygit}`, `cmd` is
+    // an ancestor of both branches and would be wrongly selected over the
+    // actual independent leaves. Only trust it when every descendant pair is
+    // mutually ancestor-related (a genuine linear chain); otherwise prefer
+    // the most recently started descendant.
+    let is_linear_chain = descendants.iter().all(|left| {
+        descendants.iter().all(|right| {
+            left.pid == right.pid
+                || process_is_ancestor(left.pid, right.pid, snapshot)
+                || process_is_ancestor(right.pid, left.pid, snapshot)
+        })
+    });
+    if is_linear_chain {
+        if let Some(chain) = select_topmost_chain_candidate(descendants, snapshot) {
+            return Some(chain);
+        }
     }
     descendants
         .iter()
@@ -3687,6 +3702,24 @@ mod tests {
             test_entry(10, 1, "powershell.exe", &["powershell.exe"]),
             test_entry_with_creation_time(20, 10, "node.exe", &["node.exe", "watch"], Some(100)),
             test_entry_with_creation_time(30, 10, "lazygit.exe", &["lazygit.exe"], Some(200)),
+        ];
+
+        let job = super::select_pane_foreground_job(10, &entries).unwrap();
+
+        assert_eq!(job.process_group_id, 30);
+        assert_eq!(job.processes[0].name, "lazygit.exe");
+    }
+
+    #[test]
+    fn windows_process_tree_prefers_recent_leaf_over_shared_wrapper_with_branches() {
+        // shell -> cmd -> {watcher, lazygit}: cmd is a common ancestor of
+        // both branches but isn't a genuine single chain, so it must not be
+        // selected over the actual independent leaf processes.
+        let entries = vec![
+            test_entry(10, 1, "powershell.exe", &["powershell.exe"]),
+            test_entry_with_creation_time(15, 10, "cmd.exe", &["cmd.exe"], Some(50)),
+            test_entry_with_creation_time(20, 15, "node.exe", &["node.exe", "watch"], Some(100)),
+            test_entry_with_creation_time(30, 15, "lazygit.exe", &["lazygit.exe"], Some(200)),
         ];
 
         let job = super::select_pane_foreground_job(10, &entries).unwrap();
