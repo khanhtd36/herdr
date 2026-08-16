@@ -1,0 +1,51 @@
+name: Deploy install assets to Pages
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "website/install.sh"
+      - "website/install.ps1"
+      - "website/latest.json"
+      - "website/CNAME"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      # Minimal deploy: only the install assets, not the full docs site.
+      - name: Assemble Pages payload
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          cp website/install.sh _site/install.sh
+          cp website/install.ps1 _site/install.ps1
+          cp website/latest.json _site/latest.json
+          cp website/CNAME _site/CNAME
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

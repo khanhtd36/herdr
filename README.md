@@ -41,11 +41,25 @@ https://github.com/user-attachments/assets/043ec09f-4bdd-41d5-aee0-8fda6b83e267
 
 ## install (this fork)
 
+```bash
+curl -fsSL https://herdr.khanhtd36.dev/install.sh | sh
+```
+
+```powershell
+irm https://herdr.khanhtd36.dev/install.ps1 | iex
+```
+
 ```powershell
 winget install khanhtd36.herdr-khanhtd36
 ```
 
 or grab a binary from [releases](https://github.com/khanhtd36/herdr/releases). the binary is still named `herdr`.
+
+> if you installed an older fork build before this fork switched off `herdr.dev`
+> to its own `herdr.khanhtd36.dev`, `herdr update` on that old binary still
+> points at `herdr.dev` and will fail. Run one of the commands above manually
+> once to pick up a build with the new update URL; `herdr update` will keep
+> itself current after that.
 
 for the official upstream project, see the [install section of herdrdev/herdr](https://github.com/herdrdev/herdr#install).
 

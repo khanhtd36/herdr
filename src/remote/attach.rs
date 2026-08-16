@@ -27,8 +27,10 @@ const BRIDGE_SOCKET_PERMISSION_MODE: u32 = 0o600;
 const REMOTE_SERVER_SHUTDOWN_CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 const REMOTE_SERVER_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const CURRENT_PROTOCOL: u32 = crate::protocol::PROTOCOL_VERSION;
-const STABLE_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/latest.json";
-const PREVIEW_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/preview.json";
+const STABLE_UPDATE_MANIFEST_URL: &str = "https://herdr.khanhtd36.dev/latest.json";
+// This fork ships a single channel; there is no separate preview build or
+// preview.json, so the preview manifest URL resolves to the same manifest.
+const PREVIEW_UPDATE_MANIFEST_URL: &str = "https://herdr.khanhtd36.dev/latest.json";
 const REMOTE_BINARY_ENV_VAR: &str = "HERDR_REMOTE_BINARY";
 const SSH_CONTROL_SOCKET_NAME: &str = "ctl";
 pub(crate) const REATTACH_COMMAND_ENV_VAR: &str = "HERDR_REATTACH_COMMAND";

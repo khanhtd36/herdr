@@ -12,11 +12,13 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 if ([string]::IsNullOrWhiteSpace($Channel)) {
-    $Channel = "preview"
+    $Channel = "stable"
 }
 
+# This fork ships a single "stable" channel on Windows; there is no separate
+# preview build.
 if ($Channel -notin @("stable", "preview")) {
-    Write-Error "Invalid Herdr channel '$Channel'. Use 'preview'."
+    Write-Error "Invalid Herdr channel '$Channel'. Use 'stable'."
     exit 1
 }
 
@@ -526,11 +528,6 @@ if (-not [Environment]::Is64BitOperatingSystem) {
     exit 1
 }
 
-if ($Channel -eq "stable") {
-    Write-Error "Windows builds are preview-only for now. Omit -Channel or use -Channel preview."
-    exit 1
-}
-
 $architecture = [System.Runtime.InteropServices.RuntimeInformation,mscorlib]::OSArchitecture.ToString()
 switch ($architecture) {
     "X64" {
@@ -549,11 +546,9 @@ switch ($architecture) {
 }
 
 if ([string]::IsNullOrWhiteSpace($ManifestUrl)) {
-    $ManifestUrl = if ($Channel -eq "preview") {
-        "https://herdr.dev/preview.json"
-    } else {
-        "https://herdr.dev/latest.json"
-    }
+    # This fork ships a single channel; both "stable" and "preview" resolve to
+    # the same manifest.
+    $ManifestUrl = "https://herdr.khanhtd36.dev/latest.json"
 }
 
 $herdrHome = if ([string]::IsNullOrWhiteSpace($env:HERDR_HOME)) {

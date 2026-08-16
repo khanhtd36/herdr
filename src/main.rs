@@ -157,11 +157,10 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 
 [update]
 # Update channel used by background version checks and `herdr update`.
-# Defaults to "stable" on Linux/macOS and "preview" on Windows.
-# Set explicitly to choose stable releases or opt-in preview builds.
+# This fork ships a single "stable" channel on all platforms, including Windows.
 # channel = "stable"
 
-# Check herdr.dev for new Herdr versions in the background.
+# Check herdr.khanhtd36.dev for new Herdr versions in the background.
 # version_check = true
 
 # Check herdr.dev for remote agent-detection manifest updates in the background.
@@ -727,7 +726,7 @@ fn main() -> io::Result<()> {
         println!("Config: {}", config::config_path().display());
         println!("Logs:   {}", logging::help_log_paths_summary());
         println!("Env:    HERDR_CONFIG_PATH overrides config file path");
-        println!("Home:   https://herdr.dev");
+        println!("Home:   https://herdr.khanhtd36.dev");
         println!("Skill:  herdr --skill prints agent instructions for driving herdr from a pane");
         return Ok(());
     }

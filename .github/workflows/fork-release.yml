@@ -180,7 +180,9 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          persist-credentials: false
+          # Needed so the "Update latest.json manifest" step below can push
+          # the regenerated manifest back to master.
+          persist-credentials: true
 
       - name: Determine version
         id: version
@@ -206,6 +208,70 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           echo "windows_asset_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/herdr-windows-x86_64.exe" >> "$GITHUB_OUTPUT"
+
+      # NOTE: "protocol" below is hardcoded to the wire protocol version this
+      # fork last synced from upstream (see src/protocol/wire.rs::PROTOCOL_VERSION).
+      # Bump it here when that constant changes.
+      - name: Update latest.json manifest
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          linux_sha="$(sha256sum herdr-linux-x86_64/herdr-linux-x86_64 | awk '{print $1}')"
+          macos_sha="$(sha256sum herdr-macos-aarch64/herdr-macos-aarch64 | awk '{print $1}')"
+          windows_sha="$(sha256sum herdr-windows-x86_64/herdr-windows-x86_64.exe | awk '{print $1}')"
+          python3 - "$VERSION" "$BASE_URL" "$linux_sha" "$macos_sha" "$windows_sha" <<'PYEOF'
+          import json
+          import sys
+
+          version, base_url, linux_sha, macos_sha, windows_sha = sys.argv[1:6]
+          notes = f"See https://github.com/khanhtd36/herdr/releases/tag/fork-v{version} for release notes."
+          assets = {
+              "linux-x86_64": f"{base_url}/herdr-linux-x86_64",
+              "macos-aarch64": f"{base_url}/herdr-macos-aarch64",
+              "windows-x86_64": f"{base_url}/herdr-windows-x86_64.exe",
+          }
+          sha256 = {
+              "linux-x86_64": linux_sha,
+              "macos-aarch64": macos_sha,
+              "windows-x86_64": windows_sha,
+          }
+          manifest = {
+              "version": version,
+              "protocol": 20,
+              "notes": notes,
+              "assets": assets,
+              "sha256": sha256,
+              "releases": {
+                  version: {
+                      "notes": notes,
+                      "protocol": 20,
+                      "assets": assets,
+                      "sha256": sha256,
+                  }
+              },
+          }
+          with open("website/latest.json", "w", encoding="utf-8") as f:
+              json.dump(manifest, f, indent=2)
+              f.write("\n")
+          PYEOF
+
+      - name: Commit and push manifest update
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add website/latest.json
+          if git diff --cached --quiet; then
+            echo "website/latest.json unchanged, nothing to commit"
+          else
+            git commit -m "chore: update latest.json for fork-v${VERSION}"
+            git push origin HEAD:master
+          fi
 
   winget:
     needs: release

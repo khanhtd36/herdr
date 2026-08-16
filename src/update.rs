@@ -1,6 +1,6 @@
 //! Self-update mechanism.
 //!
-//! Checks the hosted herdr.dev update manifest for newer versions.
+//! Checks the hosted herdr.khanhtd36.dev update manifest for newer versions.
 //! Manual `herdr update` downloads and installs the binary.
 //! Background checks only surface availability and release notes.
 //! Uses `curl` as a subprocess for HTTP — no additional Rust HTTP dependencies.
@@ -23,8 +23,10 @@ use std::time::{Duration, Instant};
 use interprocess::local_socket::traits::Stream as _;
 use serde::{Deserialize, Deserializer};
 
-const STABLE_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/latest.json";
-const PREVIEW_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/preview.json";
+const STABLE_UPDATE_MANIFEST_URL: &str = "https://herdr.khanhtd36.dev/latest.json";
+// This fork ships a single channel; there is no separate preview build or
+// preview.json, so the preview manifest URL resolves to the same manifest.
+const PREVIEW_UPDATE_MANIFEST_URL: &str = "https://herdr.khanhtd36.dev/latest.json";
 const HOMEBREW_FORMULA_API_URL: &str = "https://formulae.brew.sh/api/formula/herdr.json";
 const HERDR_UPDATE_COMMAND: &str = "herdr update";
 const HOMEBREW_UPDATE_COMMAND: &str = "brew update && brew upgrade herdr";
@@ -648,7 +650,7 @@ fn install_windows_update_with_installer(
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            "irm https://herdr.dev/install.ps1 | iex",
+            "irm https://herdr.khanhtd36.dev/install.ps1 | iex",
         ])
         .env("HERDR_CHANNEL", channel.as_str())
         // Drop any inherited PSModulePath. When herdr is launched from
@@ -3468,7 +3470,7 @@ mod tests {
         let json = include_str!("../website/latest.json");
         let legacy: LegacyUpdateManifest = serde_json::from_str(json)
             .expect("website/latest.json should keep legacy string asset URLs");
-        assert_eq!(legacy.assets.len(), 4);
+        assert_eq!(legacy.assets.len(), 3);
 
         let manifest: UpdateManifest =
             serde_json::from_str(json).expect("website/latest.json should match updater schema");
@@ -3478,35 +3480,38 @@ mod tests {
             .expect("metadata")
             .notes_body()
             .is_empty());
-        // website/latest.json describes the latest released binaries, not the
-        // current unreleased checkout. Its protocol is updated by the release
-        // flow together with the release assets.
+        // website/latest.json describes the latest released fork binaries, not
+        // the current unreleased checkout. Its protocol is updated by the
+        // fork-release flow together with the release assets.
         assert!(manifest.protocol.is_some());
-        assert_eq!(manifest.assets.len(), 4);
+        assert_eq!(manifest.assets.len(), 3);
         assert!(manifest.releases.contains_key(&manifest.version));
 
-        for target in [
-            "linux-x86_64",
-            "linux-aarch64",
-            "macos-x86_64",
-            "macos-aarch64",
-        ] {
+        // This fork's release workflow (.github/workflows/fork-release.yml)
+        // only builds these three targets; the asset name carries a `.exe`
+        // suffix on Windows.
+        for target in ["linux-x86_64", "macos-aarch64", "windows-x86_64"] {
             let asset = manifest
                 .assets
                 .get(target)
                 .unwrap_or_else(|| panic!("missing asset URL for {target}"));
             let url = &asset.url;
+            let asset_name = if target == "windows-x86_64" {
+                format!("herdr-{target}.exe")
+            } else {
+                format!("herdr-{target}")
+            };
             assert_eq!(
                 manifest.sha256.get(target).map(String::len),
                 Some(64),
                 "missing SHA-256 checksum for {target}"
             );
             assert!(
-                url.contains(&format!("/releases/download/v{}/", manifest.version)),
+                url.contains(&format!("/releases/download/fork-v{}/", manifest.version)),
                 "unexpected release URL for {target}: {url}"
             );
             assert!(
-                url.ends_with(&format!("herdr-{target}")),
+                url.ends_with(&asset_name),
                 "unexpected asset name for {target}: {url}"
             );
         }
@@ -3516,12 +3521,7 @@ mod tests {
                 .get("assets")
                 .and_then(serde_json::Value::as_object)
                 .unwrap_or_else(|| panic!("missing assets for release {version}"));
-            for target in [
-                "linux-x86_64",
-                "linux-aarch64",
-                "macos-x86_64",
-                "macos-aarch64",
-            ] {
+            for target in ["linux-x86_64", "macos-aarch64", "windows-x86_64"] {
                 let asset = assets
                     .get(target)
                     .cloned()
@@ -3529,12 +3529,17 @@ mod tests {
                 let asset: AssetRef = serde_json::from_value(asset)
                     .unwrap_or_else(|_| panic!("invalid asset for {version} {target}"));
                 let url = &asset.url;
+                let asset_name = if target == "windows-x86_64" {
+                    format!("herdr-{target}.exe")
+                } else {
+                    format!("herdr-{target}")
+                };
                 assert!(
-                    url.contains(&format!("/releases/download/v{version}/")),
+                    url.contains(&format!("/releases/download/fork-v{version}/")),
                     "unexpected release URL for {version} {target}: {url}"
                 );
                 assert!(
-                    url.ends_with(&format!("herdr-{target}")),
+                    url.ends_with(&asset_name),
                     "unexpected asset name for {version} {target}: {url}"
                 );
             }
