@@ -1658,16 +1658,24 @@ impl App {
         // clear_screen() erases scrollback always; whether it erases the
         // whole active screen or only rows above the cursor depends on
         // whether the cursor was at an idle shell prompt (OSC 133),
-        // which it returns. Only that case also homes the cursor and
-        // nudges the shell to redraw its prompt -- always false while
-        // an alternate-screen program (vim, tmux) is active, or when
-        // there's no shell integration at all. Mirrors Ghostty's own
-        // clear_screen action (src/termio/Termio.zig).
+        // which it returns. Only that case also nudges the shell to
+        // redraw its prompt -- always false while an alternate-screen
+        // program (vim, tmux) is active, or when there's no shell
+        // integration at all. Deliberately does not reposition the
+        // cursor locally: real Ghostty doesn't either (Termio.zig's
+        // clearScreen), relying entirely on the shell's own response to
+        // the form feed (zle/readline's clear-screen widget, which
+        // repositions and redraws on its own). Doing it locally first
+        // would silently move herdr's cursor state without going
+        // through the pty, so the shell -- computing its own
+        // repositioning relative to what it still thinks the cursor row
+        // is -- ends up fighting that mismatch instead of landing at
+        // the top.
         if runtime.clear_screen() {
-            runtime.cursor_home();
             // Form feed: the byte real terminals send for Ctrl+L /
             // "clear screen", which readline/zle trap to redraw their
-            // prompt. The shell -- not herdr -- owns the prompt text.
+            // prompt. The shell -- not herdr -- owns the prompt text
+            // and its on-screen position.
             let _ = runtime.try_send_bytes(Bytes::from_static(&[0x0C]));
         }
         encode_success(id, ResponseResult::Ok {})
@@ -4229,7 +4237,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pane_clear_screen_at_prompt_homes_cursor_and_redraws_prompt() {
+    async fn pane_clear_screen_at_prompt_erases_active_and_sends_form_feed() {
         let (mut app, public_pane_id) = app_with_test_workspace();
         let pane_id = app.state.workspaces[0].tabs[0].root_pane;
         let (runtime, mut written) =
@@ -4238,6 +4246,9 @@ mod tests {
             );
         // OSC 133;A marks the start of an idle shell prompt.
         runtime.test_process_pty_bytes(b"\x1b]133;A\x07$ ");
+        let cursor_before = runtime
+            .cursor_state(ratatui::layout::Rect::new(0, 0, 20, 5), true)
+            .unwrap();
         app.state.insert_test_runtime(pane_id, runtime);
 
         let response = app.handle_pane_clear_screen(
@@ -4253,10 +4264,22 @@ mod tests {
             .state
             .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
             .unwrap();
-        let cursor = runtime_after
+        let text = runtime_after.recent_unwrapped_text(10);
+        assert!(!text.contains('$'));
+        // Cursor position is deliberately left untouched here: real
+        // Ghostty doesn't reposition it locally either, relying
+        // entirely on the shell's own response to the form feed below
+        // (zle/readline's clear-screen widget) to redraw and reposition
+        // -- repositioning locally first would fight the shell's own
+        // relative-scroll math, which computes against what it still
+        // thinks the cursor row is.
+        let cursor_after = runtime_after
             .cursor_state(ratatui::layout::Rect::new(0, 0, 20, 5), true)
             .unwrap();
-        assert_eq!((cursor.x, cursor.y), (0, 0));
+        assert_eq!(
+            (cursor_after.x, cursor_after.y),
+            (cursor_before.x, cursor_before.y)
+        );
         let sent = written.try_recv().expect("form feed byte was sent");
         assert_eq!(&sent[..], &[0x0C]);
     }

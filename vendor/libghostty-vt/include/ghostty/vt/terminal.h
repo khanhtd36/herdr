@@ -1243,21 +1243,22 @@ GHOSTTY_API void ghostty_terminal_reset(GhosttyTerminal terminal);
  * Erase the primary screen's scrollback history always, and its active
  * content according to whether the cursor is at an idle shell prompt
  * (based on OSC 133 semantic-prompt markers the shell has reported).
- * Colors and terminal modes are never touched. It always targets the primary screen
- * specifically, regardless of which screen is currently active, so it
- * is safe to call while the alternate screen (e.g. a fullscreen program
- * like vim or tmux) is active: the running program's display is left
- * completely untouched, and the primary screen is clean when the
- * program exits.
+ * Colors, terminal modes, and cursor position are never touched --
+ * callers that also want the shell to redraw its prompt should nudge
+ * it (e.g. a form feed byte through the pty) rather than repositioning
+ * the cursor locally, the same way real Ghostty's own clear_screen
+ * action does. It always targets the primary screen specifically,
+ * regardless of which screen is currently active, so it is safe to
+ * call while the alternate screen (e.g. a fullscreen program like vim
+ * or tmux) is active: the running program's display is left completely
+ * untouched, and the primary screen is clean when the program exits.
  *
  * If the cursor is at an idle prompt, the entire active screen is
- * cleared (cursor position is left as-is; pair with
- * ghostty_terminal_cursor_home() to reposition it). Otherwise -- mid-
- * command output, or no shell integration -- only rows strictly above
- * the cursor's row are erased, matching real Ghostty's own clear_screen
- * action: this avoids leaving the screen blank with no visible content
- * when there is no shell integration available to redraw a prompt
- * afterward.
+ * cleared. Otherwise -- mid-command output, or no shell integration --
+ * only rows strictly above the cursor's row are erased, matching real
+ * Ghostty's own clear_screen action: this avoids leaving the screen
+ * blank with no visible content when there is no shell integration
+ * available to redraw a prompt afterward.
  *
  * @param terminal The terminal handle (may be NULL, in which case this is a no-op)
  * @return whether the cursor was at an idle prompt (i.e. whether the
@@ -1598,19 +1599,6 @@ GHOSTTY_API GhosttyResult ghostty_terminal_point_from_grid_ref(
     const GhosttyGridRef *ref,
     GhosttyPointTag tag,
     GhosttyPointCoordinate *out);
-
-/**
- * Move the primary screen's cursor to the top-left corner (0, 0).
- *
- * Always targets the primary screen specifically, regardless of which
- * screen is currently active, matching ghostty_terminal_clear_screen()'s
- * primary-screen targeting.
- *
- * @param terminal The terminal handle (may be NULL, in which case this is a no-op)
- *
- * @ingroup terminal
- */
-GHOSTTY_API void ghostty_terminal_cursor_home(GhosttyTerminal terminal);
 
 /** @} */
 

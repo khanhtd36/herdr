@@ -234,10 +234,6 @@ impl PaneTerminal {
         self.ghostty.clear_screen()
     }
 
-    pub fn cursor_home(&self) {
-        self.ghostty.cursor_home();
-    }
-
     pub fn set_scroll_offset_from_bottom(&self, lines: usize) {
         self.ghostty.set_scroll_offset_from_bottom(lines);
     }
@@ -1644,12 +1640,6 @@ impl GhosttyPaneTerminal {
             .lock()
             .map(|mut core| core.terminal.clear_screen())
             .unwrap_or(false)
-    }
-
-    pub fn cursor_home(&self) {
-        if let Ok(mut core) = self.core.lock() {
-            core.terminal.cursor_home();
-        }
     }
 
     pub fn set_scroll_offset_from_bottom(&self, lines: usize) {

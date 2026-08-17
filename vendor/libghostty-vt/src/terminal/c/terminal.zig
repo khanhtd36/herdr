@@ -691,29 +691,31 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
 
 /// Erase the primary screen's scrollback history always, and its active
 /// content according to whether the cursor is at an idle shell prompt
-/// (see `Terminal.cursorIsAtPrompt`). Colors and terminal modes are never
-/// touched. It always targets the primary screen specifically (not
-/// whichever screen is currently active), so it is safe to call while
-/// the alternate screen (e.g. vim, tmux) is active: the running
-/// program's display is left completely untouched, and the primary
-/// screen is clean when the program exits.
+/// (see `Terminal.cursorIsAtPrompt`). Colors, terminal modes, and
+/// cursor position are never touched -- callers that also want the
+/// shell to redraw its prompt should nudge it (e.g. a form feed byte
+/// through the pty) rather than repositioning the cursor locally here,
+/// the same way real Ghostty's own clear_screen action does: the
+/// shell's own redraw is what actually repositions things, and a local
+/// reposition first would only fight it. It always targets the primary
+/// screen specifically (not whichever screen is currently active), so
+/// it is safe to call while the alternate screen (e.g. vim, tmux) is
+/// active: the running program's display is left completely untouched,
+/// and the primary screen is clean when the program exits.
 ///
 /// If the cursor is at an idle prompt, the entire active screen is
-/// cleared (cursor position is left as-is; pair with `cursor_home` to
-/// reposition it). Otherwise -- mid-command output, or no shell
-/// integration -- only rows strictly above the cursor's row are erased
-/// in place (VT100 ED1 semantics; the cursor's own row and everything
-/// below it is untouched, and the cursor does not move), matching the
-/// intent of real Ghostty's own clear_screen fallback but using
-/// `clearRows` instead of `eraseActive`: the latter physically removes
-/// and shifts pages, which does not reliably erase the full requested
-/// range when the active area spans more than one internal page (e.g.
-/// a still-growing buffer that has not yet triggered real scrollback).
+/// cleared. Otherwise -- mid-command output, or no shell integration --
+/// only rows strictly above the cursor's row are erased in place
+/// (VT100 ED1 semantics via `clearRows`; the cursor's own row and
+/// everything below it is untouched). Real Ghostty's own clear_screen
+/// fallback uses `eraseActive` instead, which physically removes and
+/// shifts pages; that does not reliably erase the full requested range
+/// when the active area spans more than one internal page (e.g. a
+/// still-growing buffer that has not yet triggered real scrollback).
 ///
 /// Returns whether the cursor was at an idle prompt (i.e. whether the
-/// full-screen branch ran), so callers can decide whether to also home
-/// the cursor and nudge the shell to redraw its prompt, using the same
-/// prompt determination this function itself used.
+/// full-screen branch ran), so callers can decide whether to also
+/// nudge the shell to redraw its prompt.
 pub fn clear_screen(terminal_: Terminal) callconv(lib.calling_conv) bool {
     const t: *ZigTerminal = (terminal_ orelse return false).terminal;
     const primary = t.screens.get(.primary) orelse return false;
@@ -1029,16 +1031,6 @@ pub fn free(terminal_: Terminal) callconv(lib.calling_conv) void {
     t.deinit(alloc);
     alloc.destroy(t);
     alloc.destroy(wrapper);
-}
-
-/// Move the primary screen's cursor to the top-left corner (0, 0). Always
-/// targets the primary screen specifically (not whichever screen is
-/// currently active), matching `clear_screen`'s primary-screen targeting.
-pub fn cursor_home(terminal_: Terminal) callconv(lib.calling_conv) void {
-    const t: *ZigTerminal = (terminal_ orelse return).terminal;
-    const primary = t.screens.get(.primary) orelse return;
-    primary.cursorAbsolute(0, 0);
-    primary.cursor.pending_wrap = false;
 }
 
 test "new/free" {

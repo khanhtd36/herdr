@@ -231,8 +231,6 @@ pub const tracked_grid_ref_point = grid_ref_tracked.tracked_grid_ref_point;
 pub const tracked_grid_ref_set = grid_ref_tracked.tracked_grid_ref_set;
 pub const tracked_grid_ref_snapshot = grid_ref_tracked.tracked_grid_ref_snapshot;
 
-pub const terminal_cursor_home = terminal.cursor_home;
-
 test {
     _ = allocator;
     _ = buildpkg;
