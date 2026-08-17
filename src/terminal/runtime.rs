@@ -275,6 +275,10 @@ impl TerminalRuntime {
         self.0.scroll_reset();
     }
 
+    pub fn clear_screen(&self) {
+        self.0.clear_screen();
+    }
+
     pub fn set_scroll_offset_from_bottom(&self, lines: usize) {
         self.0.set_scroll_offset_from_bottom(lines);
     }

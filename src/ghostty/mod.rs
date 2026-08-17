@@ -930,6 +930,17 @@ impl Terminal {
         Ok(())
     }
 
+    /// Erase the primary screen's active content and scrollback history.
+    /// Cursor position, colors, and modes are untouched. Always targets
+    /// the primary screen, so it is safe to call while the alternate
+    /// screen (e.g. vim, tmux) is active -- that screen is left alone.
+    pub fn clear_screen(&mut self) {
+        // SAFETY: self.raw is a live terminal handle for self's lifetime.
+        unsafe {
+            ffi::ghostty_terminal_clear_screen(self.raw);
+        }
+    }
+
     pub fn enable_kitty_graphics(&mut self) -> Result<(), Error> {
         install_png_decoder_once();
         let storage_limit = KITTY_IMAGE_STORAGE_LIMIT_BYTES;

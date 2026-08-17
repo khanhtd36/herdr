@@ -1647,6 +1647,17 @@ impl App {
 
         encode_success(id, ResponseResult::Ok {})
     }
+
+    pub(super) fn handle_pane_clear_screen(&mut self, id: String, target: PaneTarget) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&target.pane_id) else {
+            return pane_not_found(id, &target.pane_id);
+        };
+        let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
+            return pane_not_found(id, &target.pane_id);
+        };
+        runtime.clear_screen();
+        encode_success(id, ResponseResult::Ok {})
+    }
 }
 
 fn normalize_presentation_text(value: Option<String>) -> Option<String> {
@@ -4165,5 +4176,56 @@ mod tests {
 
             assert_eq!(metadata_error_code(&response), "invalid_metadata_ttl");
         }
+    }
+
+    #[tokio::test]
+    async fn pane_clear_screen_erases_content_and_scrollback() {
+        let (mut app, public_pane_id) = app_with_test_workspace();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let runtime = crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
+            20,
+            5,
+            4096,
+            b"alpha\nbeta\n",
+        );
+        app.state.insert_test_runtime(pane_id, runtime);
+        let runtime_before = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap();
+        assert!(runtime_before.recent_unwrapped_text(10).contains("alpha"));
+
+        let response = app.handle_pane_clear_screen(
+            "req".into(),
+            PaneTarget {
+                pane_id: public_pane_id,
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(success.id, "req");
+        assert_eq!(success.result, ResponseResult::Ok {});
+        let runtime_after = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap();
+        let text = runtime_after.recent_unwrapped_text(10);
+        assert!(!text.contains("alpha"));
+        assert!(!text.contains("beta"));
+    }
+
+    #[test]
+    fn pane_clear_screen_rejects_unknown_pane() {
+        let (mut app, _public_pane_id) = app_with_test_workspace();
+
+        let response = app.handle_pane_clear_screen(
+            "req".into(),
+            PaneTarget {
+                pane_id: "does-not-exist".into(),
+            },
+        );
+
+        let error: ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "pane_not_found");
     }
 }

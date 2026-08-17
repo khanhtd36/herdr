@@ -2595,6 +2595,10 @@ unsafe extern "C" {
     pub fn ghostty_terminal_reset(terminal: GhosttyTerminal);
 }
 unsafe extern "C" {
+    #[doc = " Erase the primary screen's active content and scrollback history.\n\n Unlike ghostty_terminal_reset(), this does not touch cursor position,\n colors, or terminal modes -- it is a pure visual clear. It always\n targets the primary screen specifically, regardless of which screen is\n currently active, so it is safe to call while the alternate screen\n (e.g. a fullscreen program like vim or tmux) is active: the running\n program's display is left completely untouched, and the primary screen\n is clean when the program exits.\n\n @param terminal The terminal handle (may be NULL, in which case this is a no-op)\n\n @ingroup terminal"]
+    pub fn ghostty_terminal_clear_screen(terminal: GhosttyTerminal);
+}
+unsafe extern "C" {
     #[doc = " Resize the terminal to the given dimensions.\n\n Changes the number of columns and rows in the terminal. The primary\n screen will reflow content if wraparound mode is enabled; the alternate\n screen does not reflow. If the dimensions are unchanged, this is a no-op.\n\n This also updates the terminal's pixel dimensions (used for image\n protocols and size reports), disables synchronized output mode (allowed\n by the spec so that resize results are shown immediately), and sends an\n in-band size report if mode 2048 is enabled.\n\n @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)\n @param cols New width in cells (must be greater than zero)\n @param rows New height in cells (must be greater than zero)\n @param cell_width_px Width of a single cell in pixels\n @param cell_height_px Height of a single cell in pixels\n @return GHOSTTY_SUCCESS on success, or an error code on failure\n\n @ingroup terminal"]
     pub fn ghostty_terminal_resize(
         terminal: GhosttyTerminal,

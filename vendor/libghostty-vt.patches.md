@@ -38,3 +38,44 @@ cargo nextest run --locked grapheme_cluster_mode_is_default_and_survives_full_re
 cargo nextest run --locked grapheme_cluster_mode_renders_flag_emoji_in_single_wide_cell
 cargo nextest run --locked grapheme_cluster_mode_renders_zwj_family_in_single_wide_cell
 ```
+
+## 0002 add ghostty_terminal_clear_screen C API
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0002-add-terminal-clear-screen-c-api.patch`
+
+herdr issue: not opened (private fork, no upstream tracking)
+
+upstream discussion: not opened; libghostty-vt exposes `eraseDisplay`/
+`eraseHistory` on `Terminal`/`Screen` but no C API to invoke them directly
+without going through the VT byte parser
+
+upstream pr: not opened
+
+vendored base: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
+
+local files:
+
+- `vendor/libghostty-vt/src/terminal/c/terminal.zig`
+- `vendor/libghostty-vt/src/terminal/c/main.zig`
+- `vendor/libghostty-vt/src/lib_vt.zig`
+- `vendor/libghostty-vt/include/ghostty/vt/terminal.h`
+
+reason: Herdr needs to clear a pane's primary-screen content and
+scrollback from outside the VT byte stream (a keybind-triggered action,
+not something the remote/local shell sent), without moving the cursor or
+resetting colors/modes the way `ghostty_terminal_reset` does. The new
+`ghostty_terminal_clear_screen` function always targets the primary
+screen directly (not whichever screen is active), so it is also safe to
+call while an alternate-screen program (vim, tmux) is running.
+
+remove when: libghostty-vt exposes an equivalent C API for a
+primary-screen-targeted erase-display-and-history operation upstream, and
+the herdr-side clear_screen action's tests pass against it unmodified.
+
+verification:
+
+```sh
+cargo nextest run --locked clear_screen
+```

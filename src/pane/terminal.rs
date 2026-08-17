@@ -230,6 +230,10 @@ impl PaneTerminal {
         self.ghostty.scroll_reset();
     }
 
+    pub fn clear_screen(&self) {
+        self.ghostty.clear_screen();
+    }
+
     pub fn set_scroll_offset_from_bottom(&self, lines: usize) {
         self.ghostty.set_scroll_offset_from_bottom(lines);
     }
@@ -1628,6 +1632,12 @@ impl GhosttyPaneTerminal {
     pub fn scroll_reset(&self) {
         if let Ok(mut core) = self.core.lock() {
             core.terminal.scroll_viewport_bottom();
+        }
+    }
+
+    pub fn clear_screen(&self) {
+        if let Ok(mut core) = self.core.lock() {
+            core.terminal.clear_screen();
         }
     }
 

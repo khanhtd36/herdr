@@ -2727,6 +2727,14 @@ impl PaneRuntime {
         self.terminal.scroll_reset();
     }
 
+    /// Erase the pane's primary screen content and scrollback history,
+    /// leaving cursor, colors, modes, and any active alternate-screen
+    /// program (vim, tmux, etc.) untouched. See
+    /// `crate::ghostty::Terminal::clear_screen`.
+    pub fn clear_screen(&self) {
+        self.terminal.clear_screen();
+    }
+
     /// Set scrollback offset measured from the live bottom of the terminal.
     pub fn set_scroll_offset_from_bottom(&self, lines: usize) {
         self.terminal.set_scroll_offset_from_bottom(lines);

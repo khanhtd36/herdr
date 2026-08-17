@@ -571,6 +571,12 @@
           "description": "Close the focused pane."
         },
         {
+          "key": "keys.clear_screen",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Clear the focused pane's screen and scrollback (cursor, colors, and any running alternate-screen program are untouched). Unset by default."
+        },
+        {
           "key": "keys.zoom",
           "type": "keybinding",
           "default": "\"prefix+z\"",

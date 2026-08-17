@@ -400,6 +400,10 @@ impl App {
                     leave_navigate_mode(&mut self.state);
                 }
             }
+            NavigateAction::ClearScreen => {
+                self.clear_screen_focused_pane_via_api();
+                leave_navigate_mode(&mut self.state);
+            }
             NavigateAction::EditScrollback => {}
             NavigateAction::CopyMode => self.state.enter_copy_mode(&self.terminal_runtimes),
             NavigateAction::Zoom => {
@@ -731,6 +735,16 @@ impl App {
         };
         self.runtime_pane_close("tui.pane.close", pane_id);
         self.state.mode == Mode::ConfirmClose
+    }
+
+    pub(crate) fn clear_screen_focused_pane_via_api(&mut self) {
+        let Some((ws_idx, pane_id)) = self.focused_pane_target() else {
+            return;
+        };
+        let Some(pane_id) = self.public_pane_id(ws_idx, pane_id) else {
+            return;
+        };
+        self.runtime_pane_clear_screen("tui.pane.clear", pane_id);
     }
 
     pub(crate) fn zoom_focused_pane_via_api(&mut self) {
@@ -1515,6 +1529,7 @@ pub(crate) enum NavigateAction {
     SplitVertical,
     SplitHorizontal,
     ClosePane,
+    ClearScreen,
     EditScrollback,
     CopyMode,
     Zoom,
@@ -1672,6 +1687,7 @@ fn non_indexed_action_for_key(
         (&kb.split_vertical, NavigateAction::SplitVertical),
         (&kb.split_horizontal, NavigateAction::SplitHorizontal),
         (&kb.close_pane, NavigateAction::ClosePane),
+        (&kb.clear_screen, NavigateAction::ClearScreen),
         (&kb.zoom, NavigateAction::Zoom),
         (&kb.resize_mode, NavigateAction::EnterResizeMode),
         (&kb.resize_pane_left, NavigateAction::ResizePaneLeft),
@@ -1922,6 +1938,7 @@ pub(super) fn execute_navigate_action_in_context(
                 leave_navigate_mode(state);
             }
         }
+        NavigateAction::ClearScreen => {}
         NavigateAction::EditScrollback => {}
         NavigateAction::CopyMode => state.enter_copy_mode(terminal_runtimes),
         NavigateAction::Zoom => {
