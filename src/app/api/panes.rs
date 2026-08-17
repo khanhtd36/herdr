@@ -4295,10 +4295,9 @@ mod tests {
         let cursor_after = runtime_after
             .cursor_state(ratatui::layout::Rect::new(0, 0, 20, 5), true)
             .unwrap();
-        // Rows above the cursor's row were physically removed and the
-        // remaining rows shifted up, so the cursor's row becomes 0;
-        // its column (mid-line, after "line two") is untouched.
-        assert_eq!((cursor_after.x, cursor_after.y), (16, 0));
+        // Rows above the cursor's row are cleared in place (VT100 ED1
+        // semantics): the cursor does not move.
+        assert_eq!((cursor_after.x, cursor_after.y), (16, 1));
         assert!(written.try_recv().is_err());
     }
 

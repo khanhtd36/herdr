@@ -14,15 +14,25 @@ Export two FFI functions for herdr's clear_screen pane action:
   Ghostty's own clear_screen keybind action). If at a prompt, the
   entire active screen is cleared. Otherwise -- mid-command output, or
   no shell integration -- only rows strictly above the cursor's row are
-  erased, matching real Ghostty's own clear_screen action, so the
-  screen is never left blank with a stranded cursor when there is no
-  shell integration to redraw a prompt afterward. It always targets the
-  primary screen directly (not whichever screen is active), so it is
-  safe to call while the alternate screen (vim, tmux) is active.
-  Returns whether the cursor was at an idle prompt, so callers can
-  decide whether to also home the cursor and nudge the shell to redraw
-  its prompt, using the same prompt determination this function itself
-  used.
+  erased in place (VT100 ED1 semantics via Screen.clearRows; the
+  cursor does not move), so the screen is never left blank with a
+  stranded cursor when there is no shell integration to redraw a
+  prompt afterward. It always targets the primary screen directly (not
+  whichever screen is active), so it is safe to call while the
+  alternate screen (vim, tmux) is active. Returns whether the cursor
+  was at an idle prompt, so callers can decide whether to also home
+  the cursor and nudge the shell to redraw its prompt, using the same
+  prompt determination this function itself used.
+
+  The not-at-prompt branch deliberately uses Screen.clearRows rather
+  than Screen.eraseActive (which real Ghostty's own Termio.clearScreen
+  uses for the same fallback): eraseActive physically removes and
+  shifts pages, and does not reliably erase the full requested range
+  when the active area spans more than one internal page -- e.g. a
+  still-growing buffer (such as a fresh SSH session's login banner)
+  that has not yet triggered real scrollback. clearRows clears cells
+  in place via the same page-iteration that already works correctly
+  for the at-prompt full-screen branch.
 - ghostty_terminal_cursor_home(): moves the primary screen's cursor to
   (0, 0), always targeting the primary screen regardless of which
   screen is active, matching ghostty_terminal_clear_screen()'s
@@ -30,11 +40,11 @@ Export two FFI functions for herdr's clear_screen pane action:
 
 Vendored base: c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3
 ---
- vendor/libghostty-vt/include/ghostty/vt/terminal.h |   41 ++++++++++++++++++
+ vendor/libghostty-vt/include/ghostty/vt/terminal.h |   41 +++++++++++++++
  vendor/libghostty-vt/src/lib_vt.zig                |    2 +
  vendor/libghostty-vt/src/terminal/c/main.zig       |    3 +
- vendor/libghostty-vt/src/terminal/c/terminal.zig   |   46 ++++++++++++++++++++
- 4 files changed, 92 insertions(+)
+ vendor/libghostty-vt/src/terminal/c/terminal.zig   |   54 ++++++++++++++++++++
+ 4 files changed, 100 insertions(+)
 
 diff --git a/vendor/libghostty-vt/include/ghostty/vt/terminal.h b/vendor/libghostty-vt/include/ghostty/vt/terminal.h
 index 26ee0c0b..6fe7430a 100644
@@ -137,10 +147,10 @@ index 37dc5768..e0331f05 100644
      _ = allocator;
      _ = buildpkg;
 diff --git a/vendor/libghostty-vt/src/terminal/c/terminal.zig b/vendor/libghostty-vt/src/terminal/c/terminal.zig
-index a896c0fd..dd0aed78 100644
+index a896c0fd..a74f97d9 100644
 --- a/vendor/libghostty-vt/src/terminal/c/terminal.zig
 +++ b/vendor/libghostty-vt/src/terminal/c/terminal.zig
-@@ -689,6 +689,42 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
+@@ -689,6 +689,50 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
      t.fullReset();
  }
  
@@ -156,10 +166,14 @@ index a896c0fd..dd0aed78 100644
 +/// If the cursor is at an idle prompt, the entire active screen is
 +/// cleared (cursor position is left as-is; pair with `cursor_home` to
 +/// reposition it). Otherwise -- mid-command output, or no shell
-+/// integration -- only rows strictly above the cursor's row are erased,
-+/// matching real Ghostty's own clear_screen action: this avoids leaving
-+/// the screen blank with no visible content when there is no shell
-+/// integration to redraw a prompt afterward.
++/// integration -- only rows strictly above the cursor's row are erased
++/// in place (VT100 ED1 semantics; the cursor's own row and everything
++/// below it is untouched, and the cursor does not move), matching the
++/// intent of real Ghostty's own clear_screen fallback but using
++/// `clearRows` instead of `eraseActive`: the latter physically removes
++/// and shifts pages, which does not reliably erase the full requested
++/// range when the active area spans more than one internal page (e.g.
++/// a still-growing buffer that has not yet triggered real scrollback).
 +///
 +/// Returns whether the cursor was at an idle prompt (i.e. whether the
 +/// full-screen branch ran), so callers can decide whether to also home
@@ -175,7 +189,11 @@ index a896c0fd..dd0aed78 100644
 +        primary.clearRows(.{ .active = .{} }, null, false);
 +        primary.cursor.pending_wrap = false;
 +    } else if (primary.cursor.y > 0) {
-+        primary.eraseActive(primary.cursor.y - 1);
++        primary.clearRows(
++            .{ .active = .{ .y = 0 } },
++            .{ .active = .{ .y = primary.cursor.y - 1 } },
++            false,
++        );
 +    }
 +    return at_prompt;
 +}
@@ -183,7 +201,7 @@ index a896c0fd..dd0aed78 100644
  pub fn mode_get(
      terminal_: Terminal,
      tag: modes.ModeTag.Backing,
-@@ -987,6 +1023,16 @@ pub fn free(terminal_: Terminal) callconv(lib.calling_conv) void {
+@@ -987,6 +1031,16 @@ pub fn free(terminal_: Terminal) callconv(lib.calling_conv) void {
      alloc.destroy(wrapper);
  }
  

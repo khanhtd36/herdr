@@ -701,10 +701,14 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
 /// If the cursor is at an idle prompt, the entire active screen is
 /// cleared (cursor position is left as-is; pair with `cursor_home` to
 /// reposition it). Otherwise -- mid-command output, or no shell
-/// integration -- only rows strictly above the cursor's row are erased,
-/// matching real Ghostty's own clear_screen action: this avoids leaving
-/// the screen blank with no visible content when there is no shell
-/// integration to redraw a prompt afterward.
+/// integration -- only rows strictly above the cursor's row are erased
+/// in place (VT100 ED1 semantics; the cursor's own row and everything
+/// below it is untouched, and the cursor does not move), matching the
+/// intent of real Ghostty's own clear_screen fallback but using
+/// `clearRows` instead of `eraseActive`: the latter physically removes
+/// and shifts pages, which does not reliably erase the full requested
+/// range when the active area spans more than one internal page (e.g.
+/// a still-growing buffer that has not yet triggered real scrollback).
 ///
 /// Returns whether the cursor was at an idle prompt (i.e. whether the
 /// full-screen branch ran), so callers can decide whether to also home
@@ -720,7 +724,11 @@ pub fn clear_screen(terminal_: Terminal) callconv(lib.calling_conv) bool {
         primary.clearRows(.{ .active = .{} }, null, false);
         primary.cursor.pending_wrap = false;
     } else if (primary.cursor.y > 0) {
-        primary.eraseActive(primary.cursor.y - 1);
+        primary.clearRows(
+            .{ .active = .{ .y = 0 } },
+            .{ .active = .{ .y = primary.cursor.y - 1 } },
+            false,
+        );
     }
     return at_prompt;
 }

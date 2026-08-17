@@ -74,8 +74,14 @@ shell to redraw its prompt, instead of leaving the cursor stranded with
 no prompt visible. `ghostty_terminal_clear_screen` always erases
 scrollback, and clears the whole active screen only when
 `cursorIsAtPrompt()` says the cursor is at an idle, shell-integration-
-reported prompt -- otherwise it erases only rows above the cursor,
-matching real Ghostty, so the screen isn't left blank with a stranded
+reported prompt -- otherwise it erases only rows above the cursor in
+place (VT100 ED1 semantics via `Screen.clearRows`, not
+`Screen.eraseActive` as real Ghostty's own `Termio.clearScreen` uses
+for this fallback: `eraseActive` physically removes and shifts pages,
+and does not reliably erase the full requested range once the active
+area spans more than one internal page, e.g. a still-growing buffer
+such as a fresh SSH session's login banner that hasn't yet triggered
+real scrollback), so the screen isn't left blank with a stranded
 cursor when there's no shell integration to redraw a prompt afterward.
 It returns that same prompt determination so callers can decide whether
 to also home the cursor and send a form-feed byte to the pty: sending
