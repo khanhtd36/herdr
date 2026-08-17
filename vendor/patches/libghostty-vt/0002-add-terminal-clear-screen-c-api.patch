@@ -1,53 +1,102 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Khanh Truong <khanhtd36@gmail.com>
 Date: Mon, 17 Aug 2026 12:51:16 +0700
-Subject: [PATCH] vendor(libghostty-vt): add ghostty_terminal_clear_screen C
- API
+Subject: [PATCH] vendor(libghostty-vt): add prompt-aware terminal
+ clear_screen and cursor_home C API
 
-Export a new FFI function that erases the primary screen's active
-content and scrollback history without touching cursor position,
-colors, or terminal modes. It always targets the primary screen
-directly, so it is safe to call while the alternate screen (vim,
-tmux, etc.) is active.
+Export two FFI functions for herdr's clear_screen pane action:
+
+- ghostty_terminal_clear_screen(): erases the primary screen's
+  scrollback history always, and its active content according to
+  whether the cursor is at an idle shell prompt (OSC 133
+  semantic-prompt state, via the existing upstream
+  Terminal.cursorIsAtPrompt() -- already used internally by real
+  Ghostty's own clear_screen keybind action). If at a prompt, the
+  entire active screen is cleared. Otherwise -- mid-command output, or
+  no shell integration -- only rows strictly above the cursor's row are
+  erased, matching real Ghostty's own clear_screen action, so the
+  screen is never left blank with a stranded cursor when there is no
+  shell integration to redraw a prompt afterward. It always targets the
+  primary screen directly (not whichever screen is active), so it is
+  safe to call while the alternate screen (vim, tmux) is active.
+  Returns whether the cursor was at an idle prompt, so callers can
+  decide whether to also home the cursor and nudge the shell to redraw
+  its prompt, using the same prompt determination this function itself
+  used.
+- ghostty_terminal_cursor_home(): moves the primary screen's cursor to
+  (0, 0), always targeting the primary screen regardless of which
+  screen is active, matching ghostty_terminal_clear_screen()'s
+  primary-screen targeting.
 
 Vendored base: c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3
 ---
- .../libghostty-vt/include/ghostty/vt/terminal.h | 17 +++++++++++++++++
- vendor/libghostty-vt/src/lib_vt.zig             |  1 +
- vendor/libghostty-vt/src/terminal/c/main.zig    |  1 +
- .../libghostty-vt/src/terminal/c/terminal.zig   | 15 +++++++++++++++
- 4 files changed, 34 insertions(+)
+ vendor/libghostty-vt/include/ghostty/vt/terminal.h |   41 ++++++++++++++++++
+ vendor/libghostty-vt/src/lib_vt.zig                |    2 +
+ vendor/libghostty-vt/src/terminal/c/main.zig       |    3 +
+ vendor/libghostty-vt/src/terminal/c/terminal.zig   |   46 ++++++++++++++++++++
+ 4 files changed, 92 insertions(+)
 
 diff --git a/vendor/libghostty-vt/include/ghostty/vt/terminal.h b/vendor/libghostty-vt/include/ghostty/vt/terminal.h
-index 26ee0c0b..8f2393da 100644
+index 26ee0c0b..6fe7430a 100644
 --- a/vendor/libghostty-vt/include/ghostty/vt/terminal.h
 +++ b/vendor/libghostty-vt/include/ghostty/vt/terminal.h
-@@ -1239,6 +1239,23 @@ GHOSTTY_API void ghostty_terminal_free(GhosttyTerminal terminal);
+@@ -1239,6 +1239,34 @@ GHOSTTY_API void ghostty_terminal_free(GhosttyTerminal terminal);
   */
  GHOSTTY_API void ghostty_terminal_reset(GhosttyTerminal terminal);
  
 +/**
-+ * Erase the primary screen's active content and scrollback history.
++ * Erase the primary screen's scrollback history always, and its active
++ * content according to whether the cursor is at an idle shell prompt
++ * (based on OSC 133 semantic-prompt markers the shell has reported).
++ * Colors and terminal modes are never touched. It always targets the primary screen
++ * specifically, regardless of which screen is currently active, so it
++ * is safe to call while the alternate screen (e.g. a fullscreen program
++ * like vim or tmux) is active: the running program's display is left
++ * completely untouched, and the primary screen is clean when the
++ * program exits.
 + *
-+ * Unlike ghostty_terminal_reset(), this does not touch cursor position,
-+ * colors, or terminal modes -- it is a pure visual clear. It always
-+ * targets the primary screen specifically, regardless of which screen is
-+ * currently active, so it is safe to call while the alternate screen
-+ * (e.g. a fullscreen program like vim or tmux) is active: the running
-+ * program's display is left completely untouched, and the primary screen
-+ * is clean when the program exits.
++ * If the cursor is at an idle prompt, the entire active screen is
++ * cleared (cursor position is left as-is; pair with
++ * ghostty_terminal_cursor_home() to reposition it). Otherwise -- mid-
++ * command output, or no shell integration -- only rows strictly above
++ * the cursor's row are erased, matching real Ghostty's own clear_screen
++ * action: this avoids leaving the screen blank with no visible content
++ * when there is no shell integration available to redraw a prompt
++ * afterward.
++ *
++ * @param terminal The terminal handle (may be NULL, in which case this is a no-op)
++ * @return whether the cursor was at an idle prompt (i.e. whether the
++ *         full-screen branch ran)
++ *
++ * @ingroup terminal
++ */
++GHOSTTY_API bool ghostty_terminal_clear_screen(GhosttyTerminal terminal);
++
+ /**
+  * Resize the terminal to the given dimensions.
+  *
+@@ -1571,6 +1599,19 @@ GHOSTTY_API GhosttyResult ghostty_terminal_point_from_grid_ref(
+     GhosttyPointTag tag,
+     GhosttyPointCoordinate *out);
+ 
++/**
++ * Move the primary screen's cursor to the top-left corner (0, 0).
++ *
++ * Always targets the primary screen specifically, regardless of which
++ * screen is currently active, matching ghostty_terminal_clear_screen()'s
++ * primary-screen targeting.
 + *
 + * @param terminal The terminal handle (may be NULL, in which case this is a no-op)
 + *
 + * @ingroup terminal
 + */
-+GHOSTTY_API void ghostty_terminal_clear_screen(GhosttyTerminal terminal);
++GHOSTTY_API void ghostty_terminal_cursor_home(GhosttyTerminal terminal);
 +
- /**
-  * Resize the terminal to the given dimensions.
-  *
+ /** @} */
+ 
+ #ifdef __cplusplus
 diff --git a/vendor/libghostty-vt/src/lib_vt.zig b/vendor/libghostty-vt/src/lib_vt.zig
-index e01cdbb8..469fa600 100644
+index e01cdbb8..073d22bf 100644
 --- a/vendor/libghostty-vt/src/lib_vt.zig
 +++ b/vendor/libghostty-vt/src/lib_vt.zig
 @@ -257,6 +257,7 @@ comptime {
@@ -58,8 +107,16 @@ index e01cdbb8..469fa600 100644
          @export(&c.terminal_resize, .{ .name = "ghostty_terminal_resize" });
          @export(&c.terminal_set, .{ .name = "ghostty_terminal_set" });
          @export(&c.terminal_vt_write, .{ .name = "ghostty_terminal_vt_write" });
+@@ -315,6 +316,7 @@ comptime {
+         @export(&c.tracked_grid_ref_point, .{ .name = "ghostty_tracked_grid_ref_point" });
+         @export(&c.tracked_grid_ref_set, .{ .name = "ghostty_tracked_grid_ref_set" });
+         @export(&c.tracked_grid_ref_snapshot, .{ .name = "ghostty_tracked_grid_ref_snapshot" });
++        @export(&c.terminal_cursor_home, .{ .name = "ghostty_terminal_cursor_home" });
+         @export(&c.build_info, .{ .name = "ghostty_build_info" });
+         @export(&c.type_json, .{ .name = "ghostty_type_json" });
+         @export(&c.alloc_alloc, .{ .name = "ghostty_alloc" });
 diff --git a/vendor/libghostty-vt/src/terminal/c/main.zig b/vendor/libghostty-vt/src/terminal/c/main.zig
-index 37dc5768..f9401b0d 100644
+index 37dc5768..e0331f05 100644
 --- a/vendor/libghostty-vt/src/terminal/c/main.zig
 +++ b/vendor/libghostty-vt/src/terminal/c/main.zig
 @@ -179,6 +179,7 @@ pub const sys_set = sys.set;
@@ -70,32 +127,78 @@ index 37dc5768..f9401b0d 100644
  pub const terminal_resize = terminal.resize;
  pub const terminal_set = terminal.set;
  pub const terminal_vt_write = terminal.vt_write;
+@@ -230,6 +231,8 @@ pub const tracked_grid_ref_point = grid_ref_tracked.tracked_grid_ref_point;
+ pub const tracked_grid_ref_set = grid_ref_tracked.tracked_grid_ref_set;
+ pub const tracked_grid_ref_snapshot = grid_ref_tracked.tracked_grid_ref_snapshot;
+ 
++pub const terminal_cursor_home = terminal.cursor_home;
++
+ test {
+     _ = allocator;
+     _ = buildpkg;
 diff --git a/vendor/libghostty-vt/src/terminal/c/terminal.zig b/vendor/libghostty-vt/src/terminal/c/terminal.zig
-index a896c0fd..f222687a 100644
+index a896c0fd..dd0aed78 100644
 --- a/vendor/libghostty-vt/src/terminal/c/terminal.zig
 +++ b/vendor/libghostty-vt/src/terminal/c/terminal.zig
-@@ -689,6 +689,21 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
+@@ -689,6 +689,42 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
      t.fullReset();
  }
  
-+/// Erase the primary screen's active content and scrollback history, in
-+/// place. Unlike `reset`, this does not touch cursor position, colors,
-+/// or terminal modes -- it is a pure visual clear. It always targets the
-+/// primary screen specifically (not whichever screen is currently active),
-+/// so it is safe to call while the alternate screen (e.g. vim, tmux) is
-+/// active: the running program's display is left completely untouched,
-+/// and the primary screen is clean when the program exits.
-+pub fn clear_screen(terminal_: Terminal) callconv(lib.calling_conv) void {
-+    const t: *ZigTerminal = (terminal_ orelse return).terminal;
-+    const primary = t.screens.get(.primary) orelse return;
-+    primary.clearRows(.{ .active = .{} }, null, false);
-+    primary.cursor.pending_wrap = false;
++/// Erase the primary screen's scrollback history always, and its active
++/// content according to whether the cursor is at an idle shell prompt
++/// (see `Terminal.cursorIsAtPrompt`). Colors and terminal modes are never
++/// touched. It always targets the primary screen specifically (not
++/// whichever screen is currently active), so it is safe to call while
++/// the alternate screen (e.g. vim, tmux) is active: the running
++/// program's display is left completely untouched, and the primary
++/// screen is clean when the program exits.
++///
++/// If the cursor is at an idle prompt, the entire active screen is
++/// cleared (cursor position is left as-is; pair with `cursor_home` to
++/// reposition it). Otherwise -- mid-command output, or no shell
++/// integration -- only rows strictly above the cursor's row are erased,
++/// matching real Ghostty's own clear_screen action: this avoids leaving
++/// the screen blank with no visible content when there is no shell
++/// integration to redraw a prompt afterward.
++///
++/// Returns whether the cursor was at an idle prompt (i.e. whether the
++/// full-screen branch ran), so callers can decide whether to also home
++/// the cursor and nudge the shell to redraw its prompt, using the same
++/// prompt determination this function itself used.
++pub fn clear_screen(terminal_: Terminal) callconv(lib.calling_conv) bool {
++    const t: *ZigTerminal = (terminal_ orelse return false).terminal;
++    const primary = t.screens.get(.primary) orelse return false;
 +    primary.eraseHistory(null);
++
++    const at_prompt = t.cursorIsAtPrompt();
++    if (at_prompt) {
++        primary.clearRows(.{ .active = .{} }, null, false);
++        primary.cursor.pending_wrap = false;
++    } else if (primary.cursor.y > 0) {
++        primary.eraseActive(primary.cursor.y - 1);
++    }
++    return at_prompt;
 +}
 +
  pub fn mode_get(
      terminal_: Terminal,
      tag: modes.ModeTag.Backing,
--- 
+@@ -987,6 +1023,16 @@ pub fn free(terminal_: Terminal) callconv(lib.calling_conv) void {
+     alloc.destroy(wrapper);
+ }
+ 
++/// Move the primary screen's cursor to the top-left corner (0, 0). Always
++/// targets the primary screen specifically (not whichever screen is
++/// currently active), matching `clear_screen`'s primary-screen targeting.
++pub fn cursor_home(terminal_: Terminal) callconv(lib.calling_conv) void {
++    const t: *ZigTerminal = (terminal_ orelse return).terminal;
++    const primary = t.screens.get(.primary) orelse return;
++    primary.cursorAbsolute(0, 0);
++    primary.cursor.pending_wrap = false;
++}
++
+ test "new/free" {
+     var t: Terminal = null;
+     try testing.expectEqual(Result.success, new(
+--
 2.50.1 (Apple Git-155)
-

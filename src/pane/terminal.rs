@@ -230,12 +230,8 @@ impl PaneTerminal {
         self.ghostty.scroll_reset();
     }
 
-    pub fn clear_screen(&self) {
-        self.ghostty.clear_screen();
-    }
-
-    pub fn cursor_is_at_prompt(&self) -> bool {
-        self.ghostty.cursor_is_at_prompt()
+    pub fn clear_screen(&self) -> bool {
+        self.ghostty.clear_screen()
     }
 
     pub fn cursor_home(&self) {
@@ -1643,16 +1639,10 @@ impl GhosttyPaneTerminal {
         }
     }
 
-    pub fn clear_screen(&self) {
-        if let Ok(mut core) = self.core.lock() {
-            core.terminal.clear_screen();
-        }
-    }
-
-    pub fn cursor_is_at_prompt(&self) -> bool {
+    pub fn clear_screen(&self) -> bool {
         self.core
             .lock()
-            .map(|core| core.terminal.cursor_is_at_prompt())
+            .map(|mut core| core.terminal.clear_screen())
             .unwrap_or(false)
     }
 

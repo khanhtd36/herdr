@@ -2727,19 +2727,13 @@ impl PaneRuntime {
         self.terminal.scroll_reset();
     }
 
-    /// Erase the pane's primary screen content and scrollback history,
-    /// leaving cursor, colors, modes, and any active alternate-screen
-    /// program (vim, tmux, etc.) untouched. See
-    /// `crate::ghostty::Terminal::clear_screen`.
-    pub fn clear_screen(&self) {
-        self.terminal.clear_screen();
-    }
-
-    /// Whether the cursor is currently sitting at an idle shell prompt
-    /// (OSC 133 semantic-prompt state). Always false while the alternate
-    /// screen (vim, tmux) is active.
-    pub fn cursor_is_at_prompt(&self) -> bool {
-        self.terminal.cursor_is_at_prompt()
+    /// Erase the pane's primary screen scrollback always, and active
+    /// content according to whether the cursor is at an idle shell
+    /// prompt, leaving colors, modes, and any active alternate-screen
+    /// program (vim, tmux, etc.) untouched. Returns whether the cursor
+    /// was at an idle prompt. See `crate::ghostty::Terminal::clear_screen`.
+    pub fn clear_screen(&self) -> bool {
+        self.terminal.clear_screen()
     }
 
     /// Move the primary screen's cursor to the top-left corner (0, 0).

@@ -39,7 +39,7 @@ cargo nextest run --locked grapheme_cluster_mode_renders_flag_emoji_in_single_wi
 cargo nextest run --locked grapheme_cluster_mode_renders_zwj_family_in_single_wide_cell
 ```
 
-## 0002 add ghostty_terminal_clear_screen C API
+## 0002 add prompt-aware terminal clear_screen and cursor_home C API
 
 status: active
 
@@ -48,8 +48,12 @@ patch: `vendor/patches/libghostty-vt/0002-add-terminal-clear-screen-c-api.patch`
 herdr issue: not opened (private fork, no upstream tracking)
 
 upstream discussion: not opened; libghostty-vt exposes `eraseDisplay`/
-`eraseHistory` on `Terminal`/`Screen` but no C API to invoke them directly
-without going through the VT byte parser
+`eraseHistory`/`eraseActive` on `Terminal`/`Screen` and
+`Terminal.cursorIsAtPrompt()` (already used internally by real Ghostty's
+own `clear_screen` keybind action in `src/termio/Termio.zig`), but no C
+API to invoke any of them directly without going through the VT byte
+parser, and no C API for repositioning the primary screen's cursor
+either.
 
 upstream pr: not opened
 
@@ -64,64 +68,31 @@ local files:
 
 reason: Herdr needs to clear a pane's primary-screen content and
 scrollback from outside the VT byte stream (a keybind-triggered action,
-not something the remote/local shell sent), without moving the cursor or
-resetting colors/modes the way `ghostty_terminal_reset` does. The new
-`ghostty_terminal_clear_screen` function always targets the primary
-screen directly (not whichever screen is active), so it is also safe to
-call while an alternate-screen program (vim, tmux) is running.
+not something the remote/local shell sent), and to match real Ghostty's
+own Cmd+K behavior when doing so: clear, home the cursor, and nudge the
+shell to redraw its prompt, instead of leaving the cursor stranded with
+no prompt visible. `ghostty_terminal_clear_screen` always erases
+scrollback, and clears the whole active screen only when
+`cursorIsAtPrompt()` says the cursor is at an idle, shell-integration-
+reported prompt -- otherwise it erases only rows above the cursor,
+matching real Ghostty, so the screen isn't left blank with a stranded
+cursor when there's no shell integration to redraw a prompt afterward.
+It returns that same prompt determination so callers can decide whether
+to also home the cursor and send a form-feed byte to the pty: sending
+that byte unconditionally would risk injecting a control byte into
+whatever is actually reading the pty (a running command, or a
+fullscreen program in the alternate screen), which real Ghostty also
+avoids by gating on the same check. `ghostty_terminal_clear_screen`
+always targets the primary screen directly (not whichever screen is
+active), so it is also safe to call while an alternate-screen program
+(vim, tmux) is running. `ghostty_terminal_cursor_home` performs the
+actual cursor reposition, always targeting the primary screen the same
+way.
 
-remove when: libghostty-vt exposes an equivalent C API for a
-primary-screen-targeted erase-display-and-history operation upstream, and
-the herdr-side clear_screen action's tests pass against it unmodified.
-
-verification:
-
-```sh
-cargo nextest run --locked clear_screen
-```
-
-## 0003 add cursor_is_at_prompt and cursor_home C API
-
-status: active
-
-patch: `vendor/patches/libghostty-vt/0003-add-cursor-is-at-prompt-and-cursor-home-c-api.patch`
-
-herdr issue: not opened (private fork, no upstream tracking)
-
-upstream discussion: not opened; `Terminal.cursorIsAtPrompt()` already
-exists upstream (used internally by real Ghostty's own `clear_screen`
-keybind action in `src/termio/Termio.zig`) but is not exposed through the
-C API, and there is no C API for repositioning the primary screen's
-cursor outside the VT byte stream either.
-
-upstream pr: not opened
-
-vendored base: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
-
-local files:
-
-- `vendor/libghostty-vt/src/terminal/c/terminal.zig`
-- `vendor/libghostty-vt/src/terminal/c/main.zig`
-- `vendor/libghostty-vt/src/lib_vt.zig`
-- `vendor/libghostty-vt/include/ghostty/vt/terminal.h`
-
-reason: herdr's `clear_screen` action needs to match real Ghostty's own
-Cmd+K behavior (clear, home cursor, and nudge the shell to redraw its
-prompt) instead of leaving the cursor stranded with no prompt visible.
-Real Ghostty only homes the cursor and writes a form-feed byte to the
-pty when `cursorIsAtPrompt()` says the cursor is at an idle,
-shell-integration-reported prompt (see `Termio.clearScreen` in the real
-Ghostty source) -- otherwise it risks injecting a control byte into
-whatever is actually reading the pty (a running command, or a fullscreen
-program in the alternate screen). `ghostty_terminal_cursor_is_at_prompt`
-exposes that same upstream check so herdr can gate its own prompt-redraw
-the same way. `ghostty_terminal_cursor_home` performs the actual
-reposition, always targeting the primary screen like
-`ghostty_terminal_clear_screen` does.
-
-remove when: libghostty-vt exposes equivalent C API functions for
-`cursorIsAtPrompt()` and a primary-screen cursor-home operation upstream,
-and the herdr-side clear_screen tests pass against them unmodified.
+remove when: libghostty-vt exposes equivalent C API functions for a
+primary-screen-targeted, prompt-aware erase-display-and-history
+operation and a primary-screen cursor-home operation upstream, and the
+herdr-side clear_screen action's tests pass against them unmodified.
 
 verification:
 

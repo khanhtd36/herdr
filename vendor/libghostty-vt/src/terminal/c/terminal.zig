@@ -689,19 +689,40 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
     t.fullReset();
 }
 
-/// Erase the primary screen's active content and scrollback history, in
-/// place. Unlike `reset`, this does not touch cursor position, colors,
-/// or terminal modes -- it is a pure visual clear. It always targets the
-/// primary screen specifically (not whichever screen is currently active),
-/// so it is safe to call while the alternate screen (e.g. vim, tmux) is
-/// active: the running program's display is left completely untouched,
-/// and the primary screen is clean when the program exits.
-pub fn clear_screen(terminal_: Terminal) callconv(lib.calling_conv) void {
-    const t: *ZigTerminal = (terminal_ orelse return).terminal;
-    const primary = t.screens.get(.primary) orelse return;
-    primary.clearRows(.{ .active = .{} }, null, false);
-    primary.cursor.pending_wrap = false;
+/// Erase the primary screen's scrollback history always, and its active
+/// content according to whether the cursor is at an idle shell prompt
+/// (see `Terminal.cursorIsAtPrompt`). Colors and terminal modes are never
+/// touched. It always targets the primary screen specifically (not
+/// whichever screen is currently active), so it is safe to call while
+/// the alternate screen (e.g. vim, tmux) is active: the running
+/// program's display is left completely untouched, and the primary
+/// screen is clean when the program exits.
+///
+/// If the cursor is at an idle prompt, the entire active screen is
+/// cleared (cursor position is left as-is; pair with `cursor_home` to
+/// reposition it). Otherwise -- mid-command output, or no shell
+/// integration -- only rows strictly above the cursor's row are erased,
+/// matching real Ghostty's own clear_screen action: this avoids leaving
+/// the screen blank with no visible content when there is no shell
+/// integration to redraw a prompt afterward.
+///
+/// Returns whether the cursor was at an idle prompt (i.e. whether the
+/// full-screen branch ran), so callers can decide whether to also home
+/// the cursor and nudge the shell to redraw its prompt, using the same
+/// prompt determination this function itself used.
+pub fn clear_screen(terminal_: Terminal) callconv(lib.calling_conv) bool {
+    const t: *ZigTerminal = (terminal_ orelse return false).terminal;
+    const primary = t.screens.get(.primary) orelse return false;
     primary.eraseHistory(null);
+
+    const at_prompt = t.cursorIsAtPrompt();
+    if (at_prompt) {
+        primary.clearRows(.{ .active = .{} }, null, false);
+        primary.cursor.pending_wrap = false;
+    } else if (primary.cursor.y > 0) {
+        primary.eraseActive(primary.cursor.y - 1);
+    }
+    return at_prompt;
 }
 
 pub fn mode_get(
@@ -1000,15 +1021,6 @@ pub fn free(terminal_: Terminal) callconv(lib.calling_conv) void {
     t.deinit(alloc);
     alloc.destroy(t);
     alloc.destroy(wrapper);
-}
-
-/// Whether the cursor is currently sitting at an idle shell prompt, based
-/// on OSC 133 semantic-prompt markers the shell has reported. Always
-/// false while the alternate screen (e.g. vim, tmux) is active, since a
-/// fullscreen program is never a shell prompt.
-pub fn cursor_is_at_prompt(terminal_: Terminal) callconv(lib.calling_conv) bool {
-    const t: *ZigTerminal = (terminal_ orelse return false).terminal;
-    return t.cursorIsAtPrompt();
 }
 
 /// Move the primary screen's cursor to the top-left corner (0, 0). Always

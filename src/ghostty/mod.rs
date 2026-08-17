@@ -930,23 +930,15 @@ impl Terminal {
         Ok(())
     }
 
-    /// Erase the primary screen's active content and scrollback history.
-    /// Cursor position, colors, and modes are untouched. Always targets
-    /// the primary screen, so it is safe to call while the alternate
-    /// screen (e.g. vim, tmux) is active -- that screen is left alone.
-    pub fn clear_screen(&mut self) {
+    /// Erases scrollback always, and active content according to whether
+    /// the cursor is at an idle shell prompt. Returns whether it was
+    /// (i.e. whether the full-screen branch ran). Always targets the
+    /// primary screen, so it is safe to call while the alternate screen
+    /// (e.g. vim, tmux) is active -- that screen is left alone. See
+    /// `ffi::ghostty_terminal_clear_screen`.
+    pub fn clear_screen(&mut self) -> bool {
         // SAFETY: self.raw is a live terminal handle for self's lifetime.
-        unsafe {
-            ffi::ghostty_terminal_clear_screen(self.raw);
-        }
-    }
-
-    /// Whether the cursor is currently sitting at an idle shell prompt
-    /// (OSC 133 semantic-prompt state). Always false while the alternate
-    /// screen (vim, tmux) is active.
-    pub fn cursor_is_at_prompt(&self) -> bool {
-        // SAFETY: self.raw is a live terminal handle for self's lifetime.
-        unsafe { ffi::ghostty_terminal_cursor_is_at_prompt(self.raw) }
+        unsafe { ffi::ghostty_terminal_clear_screen(self.raw) }
     }
 
     /// Move the primary screen's cursor to the top-left corner (0, 0).

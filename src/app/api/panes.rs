@@ -1655,13 +1655,15 @@ impl App {
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
             return pane_not_found(id, &target.pane_id);
         };
-        runtime.clear_screen();
-        // Only home the cursor and nudge the shell to redraw its prompt
-        // when the cursor was at an idle shell prompt (OSC 133). This is
-        // always false while an alternate-screen program (vim, tmux) is
-        // active, so its cursor tracking is never disturbed. Mirrors
-        // Ghostty's own clear_screen action (src/termio/Termio.zig).
-        if runtime.cursor_is_at_prompt() {
+        // clear_screen() erases scrollback always; whether it erases the
+        // whole active screen or only rows above the cursor depends on
+        // whether the cursor was at an idle shell prompt (OSC 133),
+        // which it returns. Only that case also homes the cursor and
+        // nudges the shell to redraw its prompt -- always false while
+        // an alternate-screen program (vim, tmux) is active, or when
+        // there's no shell integration at all. Mirrors Ghostty's own
+        // clear_screen action (src/termio/Termio.zig).
+        if runtime.clear_screen() {
             runtime.cursor_home();
             // Form feed: the byte real terminals send for Ctrl+L /
             // "clear screen", which readline/zle trap to redraw their
@@ -4260,7 +4262,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pane_clear_screen_not_at_prompt_leaves_cursor_and_pty_alone() {
+    async fn pane_clear_screen_not_at_prompt_erases_only_above_cursor() {
         let (mut app, public_pane_id) = app_with_test_workspace();
         let pane_id = app.state.workspaces[0].tabs[0].root_pane;
         let (runtime, mut written) =
@@ -4268,11 +4270,12 @@ mod tests {
                 20, 5, 4096, b"", 8,
             );
         // No OSC 133 markers: cursor position is plain mid-output text,
-        // not a recognized idle prompt.
-        runtime.test_process_pty_bytes(b"line one\nline two\n");
-        let cursor_before = runtime
-            .cursor_state(ratatui::layout::Rect::new(0, 0, 20, 5), true)
-            .unwrap();
+        // not a recognized idle prompt. Real Ghostty erases only rows
+        // above the cursor in this case (no shell integration to redraw
+        // a prompt afterward), rather than blanking the whole screen.
+        // No trailing newline, so the cursor sits at the end of "line
+        // two" rather than on a fresh blank row below it.
+        runtime.test_process_pty_bytes(b"line one\nline two");
         app.state.insert_test_runtime(pane_id, runtime);
 
         app.handle_pane_clear_screen(
@@ -4286,13 +4289,16 @@ mod tests {
             .state
             .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
             .unwrap();
+        let text = runtime_after.recent_unwrapped_text(10);
+        assert!(!text.contains("line one"));
+        assert!(text.contains("line two"));
         let cursor_after = runtime_after
             .cursor_state(ratatui::layout::Rect::new(0, 0, 20, 5), true)
             .unwrap();
-        assert_eq!(
-            (cursor_after.x, cursor_after.y),
-            (cursor_before.x, cursor_before.y)
-        );
+        // Rows above the cursor's row were physically removed and the
+        // remaining rows shifted up, so the cursor's row becomes 0;
+        // its column (mid-line, after "line two") is untouched.
+        assert_eq!((cursor_after.x, cursor_after.y), (16, 0));
         assert!(written.try_recv().is_err());
     }
 
