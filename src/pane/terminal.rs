@@ -234,6 +234,14 @@ impl PaneTerminal {
         self.ghostty.clear_screen();
     }
 
+    pub fn cursor_is_at_prompt(&self) -> bool {
+        self.ghostty.cursor_is_at_prompt()
+    }
+
+    pub fn cursor_home(&self) {
+        self.ghostty.cursor_home();
+    }
+
     pub fn set_scroll_offset_from_bottom(&self, lines: usize) {
         self.ghostty.set_scroll_offset_from_bottom(lines);
     }
@@ -1638,6 +1646,19 @@ impl GhosttyPaneTerminal {
     pub fn clear_screen(&self) {
         if let Ok(mut core) = self.core.lock() {
             core.terminal.clear_screen();
+        }
+    }
+
+    pub fn cursor_is_at_prompt(&self) -> bool {
+        self.core
+            .lock()
+            .map(|core| core.terminal.cursor_is_at_prompt())
+            .unwrap_or(false)
+    }
+
+    pub fn cursor_home(&self) {
+        if let Ok(mut core) = self.core.lock() {
+            core.terminal.cursor_home();
         }
     }
 

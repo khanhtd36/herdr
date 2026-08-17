@@ -2735,6 +2735,18 @@ impl PaneRuntime {
         self.terminal.clear_screen();
     }
 
+    /// Whether the cursor is currently sitting at an idle shell prompt
+    /// (OSC 133 semantic-prompt state). Always false while the alternate
+    /// screen (vim, tmux) is active.
+    pub fn cursor_is_at_prompt(&self) -> bool {
+        self.terminal.cursor_is_at_prompt()
+    }
+
+    /// Move the primary screen's cursor to the top-left corner (0, 0).
+    pub fn cursor_home(&self) {
+        self.terminal.cursor_home();
+    }
+
     /// Set scrollback offset measured from the live bottom of the terminal.
     pub fn set_scroll_offset_from_bottom(&self, lines: usize) {
         self.terminal.set_scroll_offset_from_bottom(lines);

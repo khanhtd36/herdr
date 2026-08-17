@@ -1656,6 +1656,18 @@ impl App {
             return pane_not_found(id, &target.pane_id);
         };
         runtime.clear_screen();
+        // Only home the cursor and nudge the shell to redraw its prompt
+        // when the cursor was at an idle shell prompt (OSC 133). This is
+        // always false while an alternate-screen program (vim, tmux) is
+        // active, so its cursor tracking is never disturbed. Mirrors
+        // Ghostty's own clear_screen action (src/termio/Termio.zig).
+        if runtime.cursor_is_at_prompt() {
+            runtime.cursor_home();
+            // Form feed: the byte real terminals send for Ctrl+L /
+            // "clear screen", which readline/zle trap to redraw their
+            // prompt. The shell -- not herdr -- owns the prompt text.
+            let _ = runtime.try_send_bytes(Bytes::from_static(&[0x0C]));
+        }
         encode_success(id, ResponseResult::Ok {})
     }
 }
@@ -4212,6 +4224,101 @@ mod tests {
         let text = runtime_after.recent_unwrapped_text(10);
         assert!(!text.contains("alpha"));
         assert!(!text.contains("beta"));
+    }
+
+    #[tokio::test]
+    async fn pane_clear_screen_at_prompt_homes_cursor_and_redraws_prompt() {
+        let (mut app, public_pane_id) = app_with_test_workspace();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let (runtime, mut written) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                20, 5, 4096, b"", 8,
+            );
+        // OSC 133;A marks the start of an idle shell prompt.
+        runtime.test_process_pty_bytes(b"\x1b]133;A\x07$ ");
+        app.state.insert_test_runtime(pane_id, runtime);
+
+        let response = app.handle_pane_clear_screen(
+            "req".into(),
+            PaneTarget {
+                pane_id: public_pane_id,
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(success.result, ResponseResult::Ok {});
+        let runtime_after = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap();
+        let cursor = runtime_after
+            .cursor_state(ratatui::layout::Rect::new(0, 0, 20, 5), true)
+            .unwrap();
+        assert_eq!((cursor.x, cursor.y), (0, 0));
+        let sent = written.try_recv().expect("form feed byte was sent");
+        assert_eq!(&sent[..], &[0x0C]);
+    }
+
+    #[tokio::test]
+    async fn pane_clear_screen_not_at_prompt_leaves_cursor_and_pty_alone() {
+        let (mut app, public_pane_id) = app_with_test_workspace();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let (runtime, mut written) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                20, 5, 4096, b"", 8,
+            );
+        // No OSC 133 markers: cursor position is plain mid-output text,
+        // not a recognized idle prompt.
+        runtime.test_process_pty_bytes(b"line one\nline two\n");
+        let cursor_before = runtime
+            .cursor_state(ratatui::layout::Rect::new(0, 0, 20, 5), true)
+            .unwrap();
+        app.state.insert_test_runtime(pane_id, runtime);
+
+        app.handle_pane_clear_screen(
+            "req".into(),
+            PaneTarget {
+                pane_id: public_pane_id,
+            },
+        );
+
+        let runtime_after = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap();
+        let cursor_after = runtime_after
+            .cursor_state(ratatui::layout::Rect::new(0, 0, 20, 5), true)
+            .unwrap();
+        assert_eq!(
+            (cursor_after.x, cursor_after.y),
+            (cursor_before.x, cursor_before.y)
+        );
+        assert!(written.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn pane_clear_screen_in_alt_screen_never_writes_to_pty() {
+        let (mut app, public_pane_id) = app_with_test_workspace();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let (runtime, mut written) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                20, 5, 4096, b"", 8,
+            );
+        // Enter the alternate screen (as vim/tmux would) after a prompt
+        // was marked, so any stale prompt state on the primary screen
+        // must not leak a form feed into the running program.
+        runtime.test_process_pty_bytes(b"\x1b]133;A\x07$ \x1b[?1049h");
+        assert!(runtime.alternate_screen_active());
+        app.state.insert_test_runtime(pane_id, runtime);
+
+        app.handle_pane_clear_screen(
+            "req".into(),
+            PaneTarget {
+                pane_id: public_pane_id,
+            },
+        );
+
+        assert!(written.try_recv().is_err());
     }
 
     #[test]

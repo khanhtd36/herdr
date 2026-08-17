@@ -941,6 +941,22 @@ impl Terminal {
         }
     }
 
+    /// Whether the cursor is currently sitting at an idle shell prompt
+    /// (OSC 133 semantic-prompt state). Always false while the alternate
+    /// screen (vim, tmux) is active.
+    pub fn cursor_is_at_prompt(&self) -> bool {
+        // SAFETY: self.raw is a live terminal handle for self's lifetime.
+        unsafe { ffi::ghostty_terminal_cursor_is_at_prompt(self.raw) }
+    }
+
+    /// Move the primary screen's cursor to the top-left corner (0, 0).
+    pub fn cursor_home(&mut self) {
+        // SAFETY: self.raw is a live terminal handle for self's lifetime.
+        unsafe {
+            ffi::ghostty_terminal_cursor_home(self.raw);
+        }
+    }
+
     pub fn enable_kitty_graphics(&mut self) -> Result<(), Error> {
         install_png_decoder_once();
         let storage_limit = KITTY_IMAGE_STORAGE_LIMIT_BYTES;

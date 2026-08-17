@@ -279,6 +279,14 @@ impl TerminalRuntime {
         self.0.clear_screen();
     }
 
+    pub fn cursor_is_at_prompt(&self) -> bool {
+        self.0.cursor_is_at_prompt()
+    }
+
+    pub fn cursor_home(&self) {
+        self.0.cursor_home();
+    }
+
     pub fn set_scroll_offset_from_bottom(&self, lines: usize) {
         self.0.set_scroll_offset_from_bottom(lines);
     }

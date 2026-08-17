@@ -316,6 +316,8 @@ comptime {
         @export(&c.tracked_grid_ref_point, .{ .name = "ghostty_tracked_grid_ref_point" });
         @export(&c.tracked_grid_ref_set, .{ .name = "ghostty_tracked_grid_ref_set" });
         @export(&c.tracked_grid_ref_snapshot, .{ .name = "ghostty_tracked_grid_ref_snapshot" });
+        @export(&c.terminal_cursor_is_at_prompt, .{ .name = "ghostty_terminal_cursor_is_at_prompt" });
+        @export(&c.terminal_cursor_home, .{ .name = "ghostty_terminal_cursor_home" });
         @export(&c.build_info, .{ .name = "ghostty_build_info" });
         @export(&c.type_json, .{ .name = "ghostty_type_json" });
         @export(&c.alloc_alloc, .{ .name = "ghostty_alloc" });
