@@ -1655,6 +1655,11 @@ impl App {
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
             return pane_not_found(id, &target.pane_id);
         };
+        // Scrollback is always erased below, so any existing scroll
+        // offset now refers to history that no longer exists -- pin the
+        // viewport back to the live view the way every real terminal's
+        // clear does, instead of leaving it stranded at a stale offset.
+        runtime.scroll_reset();
         // clear_screen() erases scrollback always; whether it erases the
         // whole active screen or only rows above the cursor depends on
         // whether the cursor was at an idle shell prompt (OSC 133),
@@ -4234,6 +4239,46 @@ mod tests {
         let text = runtime_after.recent_unwrapped_text(10);
         assert!(!text.contains("alpha"));
         assert!(!text.contains("beta"));
+    }
+
+    #[tokio::test]
+    async fn pane_clear_screen_resets_stale_scroll_offset() {
+        let (mut app, public_pane_id) = app_with_test_workspace();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let runtime = crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
+            20,
+            5,
+            4096,
+            b"one\ntwo\nthree\nfour\nfive\nsix\nseven\n",
+        );
+        // Scrollback is always erased below, so a pre-existing scroll
+        // offset now refers to history that no longer exists.
+        runtime.set_scroll_offset_from_bottom(1);
+        app.state.insert_test_runtime(pane_id, runtime);
+        let runtime_before = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap();
+        assert_eq!(
+            runtime_before.scroll_metrics().unwrap().offset_from_bottom,
+            1
+        );
+
+        app.handle_pane_clear_screen(
+            "req".into(),
+            PaneTarget {
+                pane_id: public_pane_id,
+            },
+        );
+
+        let runtime_after = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap();
+        assert_eq!(
+            runtime_after.scroll_metrics().unwrap().offset_from_bottom,
+            0
+        );
     }
 
     #[tokio::test]
