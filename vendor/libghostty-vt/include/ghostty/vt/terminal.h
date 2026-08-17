@@ -1240,6 +1240,23 @@ GHOSTTY_API void ghostty_terminal_free(GhosttyTerminal terminal);
 GHOSTTY_API void ghostty_terminal_reset(GhosttyTerminal terminal);
 
 /**
+ * Erase the primary screen's active content and scrollback history.
+ *
+ * Unlike ghostty_terminal_reset(), this does not touch cursor position,
+ * colors, or terminal modes -- it is a pure visual clear. It always
+ * targets the primary screen specifically, regardless of which screen is
+ * currently active, so it is safe to call while the alternate screen
+ * (e.g. a fullscreen program like vim or tmux) is active: the running
+ * program's display is left completely untouched, and the primary screen
+ * is clean when the program exits.
+ *
+ * @param terminal The terminal handle (may be NULL, in which case this is a no-op)
+ *
+ * @ingroup terminal
+ */
+GHOSTTY_API void ghostty_terminal_clear_screen(GhosttyTerminal terminal);
+
+/**
  * Resize the terminal to the given dimensions.
  *
  * Changes the number of columns and rows in the terminal. The primary

@@ -1346,6 +1346,30 @@ mod tests {
         assert_eq!(app.state.mode, Mode::Terminal);
     }
 
+    #[tokio::test]
+    async fn terminal_direct_clear_screen_shortcut_clears_focused_pane() {
+        let (mut app, _info) = app_with_screen_bytes(b"alpha\r\nbeta\r\n");
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        app.state.keybinds.clear_screen = crate::config::ActionKeybinds::direct("ctrl+k");
+        let runtime_before = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap();
+        assert!(runtime_before.recent_unwrapped_text(20).contains("alpha"));
+
+        app.handle_terminal_key(TerminalKey::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+            .await;
+
+        let runtime_after = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap();
+        let text = runtime_after.recent_unwrapped_text(20);
+        assert!(!text.contains("alpha"));
+        assert!(!text.contains("beta"));
+        assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn terminal_direct_edit_scrollback_opens_editor_pane() {

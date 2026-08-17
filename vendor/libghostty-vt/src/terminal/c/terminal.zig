@@ -689,6 +689,21 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
     t.fullReset();
 }
 
+/// Erase the primary screen's active content and scrollback history, in
+/// place. Unlike `reset`, this does not touch cursor position, colors,
+/// or terminal modes -- it is a pure visual clear. It always targets the
+/// primary screen specifically (not whichever screen is currently active),
+/// so it is safe to call while the alternate screen (e.g. vim, tmux) is
+/// active: the running program's display is left completely untouched,
+/// and the primary screen is clean when the program exits.
+pub fn clear_screen(terminal_: Terminal) callconv(lib.calling_conv) void {
+    const t: *ZigTerminal = (terminal_ orelse return).terminal;
+    const primary = t.screens.get(.primary) orelse return;
+    primary.clearRows(.{ .active = .{} }, null, false);
+    primary.cursor.pending_wrap = false;
+    primary.eraseHistory(null);
+}
+
 pub fn mode_get(
     terminal_: Terminal,
     tag: modes.ModeTag.Backing,

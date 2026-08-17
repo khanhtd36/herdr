@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Khanh Truong <khanhtd36@gmail.com>
+Date: Mon, 17 Aug 2026 12:51:16 +0700
+Subject: [PATCH] vendor(libghostty-vt): add ghostty_terminal_clear_screen C
+ API
+
+Export a new FFI function that erases the primary screen's active
+content and scrollback history without touching cursor position,
+colors, or terminal modes. It always targets the primary screen
+directly, so it is safe to call while the alternate screen (vim,
+tmux, etc.) is active.
+
+Vendored base: c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3
+---
+ .../libghostty-vt/include/ghostty/vt/terminal.h | 17 +++++++++++++++++
+ vendor/libghostty-vt/src/lib_vt.zig             |  1 +
+ vendor/libghostty-vt/src/terminal/c/main.zig    |  1 +
+ .../libghostty-vt/src/terminal/c/terminal.zig   | 15 +++++++++++++++
+ 4 files changed, 34 insertions(+)
+
+diff --git a/vendor/libghostty-vt/include/ghostty/vt/terminal.h b/vendor/libghostty-vt/include/ghostty/vt/terminal.h
+index 26ee0c0b..8f2393da 100644
+--- a/vendor/libghostty-vt/include/ghostty/vt/terminal.h
++++ b/vendor/libghostty-vt/include/ghostty/vt/terminal.h
+@@ -1239,6 +1239,23 @@ GHOSTTY_API void ghostty_terminal_free(GhosttyTerminal terminal);
+  */
+ GHOSTTY_API void ghostty_terminal_reset(GhosttyTerminal terminal);
+ 
++/**
++ * Erase the primary screen's active content and scrollback history.
++ *
++ * Unlike ghostty_terminal_reset(), this does not touch cursor position,
++ * colors, or terminal modes -- it is a pure visual clear. It always
++ * targets the primary screen specifically, regardless of which screen is
++ * currently active, so it is safe to call while the alternate screen
++ * (e.g. a fullscreen program like vim or tmux) is active: the running
++ * program's display is left completely untouched, and the primary screen
++ * is clean when the program exits.
++ *
++ * @param terminal The terminal handle (may be NULL, in which case this is a no-op)
++ *
++ * @ingroup terminal
++ */
++GHOSTTY_API void ghostty_terminal_clear_screen(GhosttyTerminal terminal);
++
+ /**
+  * Resize the terminal to the given dimensions.
+  *
+diff --git a/vendor/libghostty-vt/src/lib_vt.zig b/vendor/libghostty-vt/src/lib_vt.zig
+index e01cdbb8..469fa600 100644
+--- a/vendor/libghostty-vt/src/lib_vt.zig
++++ b/vendor/libghostty-vt/src/lib_vt.zig
+@@ -257,6 +257,7 @@ comptime {
+         @export(&c.terminal_new, .{ .name = "ghostty_terminal_new" });
+         @export(&c.terminal_free, .{ .name = "ghostty_terminal_free" });
+         @export(&c.terminal_reset, .{ .name = "ghostty_terminal_reset" });
++        @export(&c.terminal_clear_screen, .{ .name = "ghostty_terminal_clear_screen" });
+         @export(&c.terminal_resize, .{ .name = "ghostty_terminal_resize" });
+         @export(&c.terminal_set, .{ .name = "ghostty_terminal_set" });
+         @export(&c.terminal_vt_write, .{ .name = "ghostty_terminal_vt_write" });
+diff --git a/vendor/libghostty-vt/src/terminal/c/main.zig b/vendor/libghostty-vt/src/terminal/c/main.zig
+index 37dc5768..f9401b0d 100644
+--- a/vendor/libghostty-vt/src/terminal/c/main.zig
++++ b/vendor/libghostty-vt/src/terminal/c/main.zig
+@@ -179,6 +179,7 @@ pub const sys_set = sys.set;
+ pub const terminal_new = terminal.new;
+ pub const terminal_free = terminal.free;
+ pub const terminal_reset = terminal.reset;
++pub const terminal_clear_screen = terminal.clear_screen;
+ pub const terminal_resize = terminal.resize;
+ pub const terminal_set = terminal.set;
+ pub const terminal_vt_write = terminal.vt_write;
+diff --git a/vendor/libghostty-vt/src/terminal/c/terminal.zig b/vendor/libghostty-vt/src/terminal/c/terminal.zig
+index a896c0fd..f222687a 100644
+--- a/vendor/libghostty-vt/src/terminal/c/terminal.zig
++++ b/vendor/libghostty-vt/src/terminal/c/terminal.zig
+@@ -689,6 +689,21 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
+     t.fullReset();
+ }
+ 
++/// Erase the primary screen's active content and scrollback history, in
++/// place. Unlike `reset`, this does not touch cursor position, colors,
++/// or terminal modes -- it is a pure visual clear. It always targets the
++/// primary screen specifically (not whichever screen is currently active),
++/// so it is safe to call while the alternate screen (e.g. vim, tmux) is
++/// active: the running program's display is left completely untouched,
++/// and the primary screen is clean when the program exits.
++pub fn clear_screen(terminal_: Terminal) callconv(lib.calling_conv) void {
++    const t: *ZigTerminal = (terminal_ orelse return).terminal;
++    const primary = t.screens.get(.primary) orelse return;
++    primary.clearRows(.{ .active = .{} }, null, false);
++    primary.cursor.pending_wrap = false;
++    primary.eraseHistory(null);
++}
++
+ pub fn mode_get(
+     terminal_: Terminal,
+     tag: modes.ModeTag.Backing,
+-- 
+2.50.1 (Apple Git-155)
+

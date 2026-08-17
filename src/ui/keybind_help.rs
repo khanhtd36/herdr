@@ -142,6 +142,10 @@ pub(super) fn keybind_help_groups(app: &AppState) -> Vec<HelpGroup> {
         help_entry(keybind_label(&kb.split_vertical), "split vertical"),
         help_entry(keybind_label(&kb.split_horizontal), "split horizontal"),
         help_entry(keybind_label(&kb.close_pane), "close pane"),
+        help_entry(
+            keybind_label(&kb.clear_screen),
+            "clear pane screen + scrollback",
+        ),
         help_entry(keybind_label(&kb.rename_pane), "rename pane"),
         help_entry(keybind_label(&kb.edit_scrollback), "edit scrollback"),
         help_entry(keybind_label(&kb.copy_mode), "copy mode"),
