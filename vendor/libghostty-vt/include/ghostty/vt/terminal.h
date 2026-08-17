@@ -1588,6 +1588,33 @@ GHOSTTY_API GhosttyResult ghostty_terminal_point_from_grid_ref(
     GhosttyPointTag tag,
     GhosttyPointCoordinate *out);
 
+/**
+ * Whether the cursor is currently sitting at an idle shell prompt, based
+ * on OSC 133 semantic-prompt markers the shell has reported (shell
+ * integration). Always returns false while the alternate screen (e.g. a
+ * fullscreen program like vim or tmux) is active, since a fullscreen
+ * program is never a shell prompt, and while the shell has not sent any
+ * OSC 133 markers at all.
+ *
+ * @param terminal The terminal handle (may be NULL, in which case this returns false)
+ *
+ * @ingroup terminal
+ */
+GHOSTTY_API bool ghostty_terminal_cursor_is_at_prompt(GhosttyTerminal terminal);
+
+/**
+ * Move the primary screen's cursor to the top-left corner (0, 0).
+ *
+ * Always targets the primary screen specifically, regardless of which
+ * screen is currently active, matching ghostty_terminal_clear_screen()'s
+ * primary-screen targeting.
+ *
+ * @param terminal The terminal handle (may be NULL, in which case this is a no-op)
+ *
+ * @ingroup terminal
+ */
+GHOSTTY_API void ghostty_terminal_cursor_home(GhosttyTerminal terminal);
+
 /** @} */
 
 #ifdef __cplusplus

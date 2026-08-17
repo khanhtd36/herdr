@@ -1002,6 +1002,25 @@ pub fn free(terminal_: Terminal) callconv(lib.calling_conv) void {
     alloc.destroy(wrapper);
 }
 
+/// Whether the cursor is currently sitting at an idle shell prompt, based
+/// on OSC 133 semantic-prompt markers the shell has reported. Always
+/// false while the alternate screen (e.g. vim, tmux) is active, since a
+/// fullscreen program is never a shell prompt.
+pub fn cursor_is_at_prompt(terminal_: Terminal) callconv(lib.calling_conv) bool {
+    const t: *ZigTerminal = (terminal_ orelse return false).terminal;
+    return t.cursorIsAtPrompt();
+}
+
+/// Move the primary screen's cursor to the top-left corner (0, 0). Always
+/// targets the primary screen specifically (not whichever screen is
+/// currently active), matching `clear_screen`'s primary-screen targeting.
+pub fn cursor_home(terminal_: Terminal) callconv(lib.calling_conv) void {
+    const t: *ZigTerminal = (terminal_ orelse return).terminal;
+    const primary = t.screens.get(.primary) orelse return;
+    primary.cursorAbsolute(0, 0);
+    primary.cursor.pending_wrap = false;
+}
+
 test "new/free" {
     var t: Terminal = null;
     try testing.expectEqual(Result.success, new(

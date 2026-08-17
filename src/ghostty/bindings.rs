@@ -2599,6 +2599,14 @@ unsafe extern "C" {
     pub fn ghostty_terminal_clear_screen(terminal: GhosttyTerminal);
 }
 unsafe extern "C" {
+    #[doc = " Whether the cursor is currently sitting at an idle shell prompt, based\n on OSC 133 semantic-prompt markers the shell has reported (shell\n integration). Always returns false while the alternate screen (e.g. a\n fullscreen program like vim or tmux) is active, since a fullscreen\n program is never a shell prompt, and while the shell has not sent any\n OSC 133 markers at all.\n\n @param terminal The terminal handle (may be NULL, in which case this returns false)\n\n @ingroup terminal"]
+    pub fn ghostty_terminal_cursor_is_at_prompt(terminal: GhosttyTerminal) -> bool;
+}
+unsafe extern "C" {
+    #[doc = " Move the primary screen's cursor to the top-left corner (0, 0).\n\n Always targets the primary screen specifically, regardless of which\n screen is currently active, matching ghostty_terminal_clear_screen()'s\n primary-screen targeting.\n\n @param terminal The terminal handle (may be NULL, in which case this is a no-op)\n\n @ingroup terminal"]
+    pub fn ghostty_terminal_cursor_home(terminal: GhosttyTerminal);
+}
+unsafe extern "C" {
     #[doc = " Resize the terminal to the given dimensions.\n\n Changes the number of columns and rows in the terminal. The primary\n screen will reflow content if wraparound mode is enabled; the alternate\n screen does not reflow. If the dimensions are unchanged, this is a no-op.\n\n This also updates the terminal's pixel dimensions (used for image\n protocols and size reports), disables synchronized output mode (allowed\n by the spec so that resize results are shown immediately), and sends an\n in-band size report if mode 2048 is enabled.\n\n @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)\n @param cols New width in cells (must be greater than zero)\n @param rows New height in cells (must be greater than zero)\n @param cell_width_px Width of a single cell in pixels\n @param cell_height_px Height of a single cell in pixels\n @return GHOSTTY_SUCCESS on success, or an error code on failure\n\n @ingroup terminal"]
     pub fn ghostty_terminal_resize(
         terminal: GhosttyTerminal,
