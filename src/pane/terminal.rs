@@ -1560,37 +1560,15 @@ impl GhosttyPaneTerminal {
                         .saturating_sub(scrollbar.offset + scrollbar.len)
                 })
                 .unwrap_or(0);
-            let bottom_before_resize = ghostty_detection_text(&mut core)
-                .map(|text| !text.trim().is_empty())
-                .unwrap_or(false);
-            let resize_recovery_probe_lines = usize::from(rows)
+            let scroll_recovery_probe_lines = usize::from(rows)
                 .saturating_mul(8)
                 .max(DEFAULT_DETECTION_ROWS);
-            let replay_ansi = if core.terminal.active_screen().ok()
-                == Some(crate::ghostty::ActiveScreen::Primary)
-                && bottom_before_resize
-            {
-                ghostty_recent_ansi(&mut core, resize_recovery_probe_lines, true)
-                    .ok()
-                    .filter(|ansi| !ansi.trim().is_empty())
-            } else {
-                None
-            };
 
             let _ = core
                 .terminal
                 .resize(cols, rows, cell_width_px, cell_height_px);
             let terminal_responses = self.drain_pending_pty_responses();
 
-            let bottom_is_blank = ghostty_detection_text(&mut core)
-                .map(|text| text.trim().is_empty())
-                .unwrap_or(false);
-            if bottom_is_blank {
-                if let Some(ansi) = replay_ansi.as_deref() {
-                    core.terminal.scroll_viewport_bottom();
-                    core.terminal.write(ansi.as_bytes());
-                }
-            }
             #[cfg(windows)]
             if core.recent_fallback.usable {
                 core.recent_fallback.needs_refresh = true;
@@ -1599,7 +1577,7 @@ impl GhosttyPaneTerminal {
             }
             ghostty_set_scroll_offset_from_bottom(&mut core.terminal, offset_from_bottom);
             if offset_from_bottom > 0 {
-                let mut remaining = offset_from_bottom.min(resize_recovery_probe_lines);
+                let mut remaining = offset_from_bottom.min(scroll_recovery_probe_lines);
                 while remaining > 0
                     && ghostty_visible_text(&mut core)
                         .map(|text| text.trim().is_empty())
@@ -2592,14 +2570,6 @@ fn ghostty_recent_text_unwrapped_snapshot(
 ) -> Result<TerminalReadSnapshot, crate::ghostty::Error> {
     let text = ghostty_recent_text_unwrapped_for_terminal(&core.terminal, lines)?;
     Ok(finish_recent_snapshot(core, text, lines, true))
-}
-
-fn ghostty_recent_ansi(
-    core: &mut GhosttyPaneCore,
-    lines: usize,
-    unwrap: bool,
-) -> Result<String, crate::ghostty::Error> {
-    ghostty_recent_ansi_snapshot(core, lines, unwrap).map(|snapshot| snapshot.text)
 }
 
 fn ghostty_recent_ansi_snapshot(
@@ -5269,6 +5239,40 @@ mod tests {
         assert!(pane.visible_text().trim().is_empty());
         assert!(pane.detection_text().trim().is_empty());
         assert!(pane.recent_text(3).trim().is_empty());
+    }
+
+    #[test]
+    fn repeated_resizes_never_duplicate_scrollback_history() {
+        let (tx, _rx) = mpsc::channel(4);
+        let mut terminal = crate::ghostty::Terminal::new(80, 24, 10_000).unwrap();
+        for _ in 0..24 {
+            terminal.write(b"~/workspace/programs\r\n");
+        }
+        terminal.write(b"prompt$ ");
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+
+        let occurrences =
+            |p: &GhosttyPaneTerminal| p.recent_text(4000).matches("~/workspace/programs").count();
+        let baseline = occurrences(&pane);
+        assert!(baseline > 0);
+
+        // A drag-resize fires many times per second. Resizing must never write
+        // captured history back into the terminal: nothing can remove the
+        // original copy (an erase-display clears the visible screen but never
+        // scrollback), so any such write duplicates history geometrically.
+        // Counted back at the original geometry each time, since a narrow width
+        // soft-wraps the marker and would otherwise just measure reflow.
+        for i in 0..8u16 {
+            for (rows, cols) in [(1, 8), (2, 20), (12, 40), (30, 100)] {
+                pane.resize(rows, cols, 0, 0);
+                pane.resize(24, 80, 0, 0);
+                assert_eq!(
+                    occurrences(&pane),
+                    baseline,
+                    "resize cycle {i} through {rows}x{cols} changed history line count"
+                );
+            }
+        }
     }
 
     #[test]
