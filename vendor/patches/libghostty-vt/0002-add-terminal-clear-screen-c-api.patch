@@ -12,44 +12,44 @@ Terminal.cursorIsAtPrompt() -- already used internally by real
 Ghostty's own clear_screen keybind action). If at a prompt, the
 entire active screen is cleared. Otherwise -- mid-command output, or
 no shell integration -- only rows strictly above the cursor's row are
-erased in place (VT100 ED1 semantics via Screen.clearRows; the
-cursor's own row and everything below it, and the cursor itself, are
-untouched), so the screen is never left blank with a stranded cursor
-when there is no shell integration to redraw a prompt afterward. It
-always targets the primary screen directly (not whichever screen is
-active), so it is safe to call while the alternate screen (vim, tmux)
-is active. Returns whether the cursor was at an idle prompt, so
-callers can decide whether to nudge the shell to redraw its prompt,
-using the same prompt determination this function itself used.
+erased, so the screen is never left blank with a stranded cursor when
+there is no shell integration to redraw a prompt afterward. It always
+targets the primary screen directly (not whichever screen is active),
+so it is safe to call while the alternate screen (vim, tmux) is
+active. Returns whether the cursor was at an idle prompt, so callers
+can decide whether to nudge the shell to redraw its prompt, using the
+same prompt determination this function itself used.
 
-The not-at-prompt branch deliberately uses Screen.clearRows rather
-than Screen.eraseActive (which real Ghostty's own Termio.clearScreen
-uses for the same fallback): eraseActive physically removes and
-shifts pages, and does not reliably erase the full requested range
-when the active area spans more than one internal page -- e.g. a
-still-growing buffer (such as a fresh SSH session's login banner)
-that has not yet triggered real scrollback. clearRows clears cells
-in place via the same page-iteration that already works correctly
-for the at-prompt full-screen branch.
+The not-at-prompt branch uses Screen.eraseActive, the same primitive
+real Ghostty's own Termio.clearScreen uses for this fallback. That
+physically removes the rows above the cursor and shifts the survivors
+up, so the cursor's row -- typically the shell's prompt -- ends up at
+the top of the screen. That shift is the entire mechanism by which
+Cmd+K appears to "move the prompt to the top left" with no shell
+integration and nothing written to the pty, so it must not be
+replaced by an in-place clear such as Screen.clearRows: that erases
+the same cells but leaves the prompt stranded at its old row.
 
-Cursor position is never touched by this function at all, in either
-branch, matching real Ghostty's own clear_screen action exactly: it
-relies entirely on the shell's own response to a form-feed byte
-(zle/readline's clear-screen widget) to redraw and reposition its
-prompt. Repositioning the cursor locally first -- before the shell's
-own response arrives -- would silently move it without going through
-the pty, so the shell (which computes its own repositioning relative
-to what it still thinks the cursor row is) ends up fighting that
-mismatch instead of landing where it should.
+eraseActive marks only the shifted rows dirty, not the rows regrown
+at the bottom to refill the active area. A differential renderer such
+as herdr's therefore never repaints those rows and leaves the erased
+content visible below the prompt. This patch marks the whole active
+area dirty after the erase so the next render reflects the shift.
+
+Cursor position is never touched explicitly by this function, in
+either branch, matching real Ghostty's own clear_screen action
+exactly: the at-prompt branch relies entirely on the shell's own
+response to a form-feed byte (zle/readline's clear-screen widget) to
+redraw and reposition its prompt, and the not-at-prompt branch needs
+no repositioning because eraseActive's row shift carries the cursor
+to the top on its own. Repositioning the cursor locally first --
+before the shell's own response arrives -- would silently move it
+without going through the pty, so the shell (which computes its own
+repositioning relative to what it still thinks the cursor row is)
+ends up fighting that mismatch instead of landing where it should.
 
 Vendored base: c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3
 ---
- vendor/libghostty-vt/include/ghostty/vt/terminal.h |   29 +++++++++++++
- vendor/libghostty-vt/src/lib_vt.zig                |    1 
- vendor/libghostty-vt/src/terminal/c/main.zig       |    1 
- vendor/libghostty-vt/src/terminal/c/terminal.zig   |   46 ++++++++++++++++++++
- 4 files changed, 77 insertions(+)
-
 diff --git a/vendor/libghostty-vt/include/ghostty/vt/terminal.h b/vendor/libghostty-vt/include/ghostty/vt/terminal.h
 index 26ee0c0b..5676a4e8 100644
 --- a/vendor/libghostty-vt/include/ghostty/vt/terminal.h
@@ -115,10 +115,10 @@ index 37dc5768..f9401b0d 100644
  pub const terminal_set = terminal.set;
  pub const terminal_vt_write = terminal.vt_write;
 diff --git a/vendor/libghostty-vt/src/terminal/c/terminal.zig b/vendor/libghostty-vt/src/terminal/c/terminal.zig
-index a896c0fd..326e6323 100644
+index a896c0fd..411642a4 100644
 --- a/vendor/libghostty-vt/src/terminal/c/terminal.zig
 +++ b/vendor/libghostty-vt/src/terminal/c/terminal.zig
-@@ -689,6 +689,52 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
+@@ -689,6 +689,61 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
      t.fullReset();
  }
  
@@ -138,13 +138,15 @@ index a896c0fd..326e6323 100644
 +///
 +/// If the cursor is at an idle prompt, the entire active screen is
 +/// cleared. Otherwise -- mid-command output, or no shell integration --
-+/// only rows strictly above the cursor's row are erased in place
-+/// (VT100 ED1 semantics via `clearRows`; the cursor's own row and
-+/// everything below it is untouched). Real Ghostty's own clear_screen
-+/// fallback uses `eraseActive` instead, which physically removes and
-+/// shifts pages; that does not reliably erase the full requested range
-+/// when the active area spans more than one internal page (e.g. a
-+/// still-growing buffer that has not yet triggered real scrollback).
++/// rows strictly above the cursor's row are erased via `eraseActive`,
++/// exactly as real Ghostty's own clear_screen fallback does. That
++/// physically removes those rows and shifts the survivors up, so the
++/// cursor's row (typically the shell's prompt) ends up at the top of
++/// the screen. This shift is the entire reason Cmd+K appears to "move
++/// the prompt to the top left" even with no shell integration and
++/// nothing written to the pty -- so it must not be replaced with an
++/// in-place clear such as `clearRows`, which erases the same cells but
++/// leaves the prompt stranded wherever it already was.
 +///
 +/// Returns whether the cursor was at an idle prompt (i.e. whether the
 +/// full-screen branch ran), so callers can decide whether to also
@@ -159,11 +161,18 @@ index a896c0fd..326e6323 100644
 +        primary.clearRows(.{ .active = .{} }, null, false);
 +        primary.cursor.pending_wrap = false;
 +    } else if (primary.cursor.y > 0) {
-+        primary.clearRows(
-+            .{ .active = .{ .y = 0 } },
-+            .{ .active = .{ .y = primary.cursor.y - 1 } },
-+            false,
-+        );
++        primary.eraseActive(primary.cursor.y - 1);
++        // `eraseActive` physically removes rows and shifts the survivors
++        // up, but only marks the shifted rows dirty. The rows regrown at
++        // the bottom to refill the active area keep their stale dirty
++        // state, so a differential renderer never repaints them and the
++        // erased content stays visible on screen. Mark the whole active
++        // area dirty so the next render reflects the shift.
++        var y: size.CellCountInt = 0;
++        while (y < primary.pages.rows) : (y += 1) {
++            const pin = primary.pages.pin(.{ .active = .{ .y = y } }) orelse break;
++            pin.markDirty();
++        }
 +    }
 +    return at_prompt;
 +}
@@ -171,5 +180,5 @@ index a896c0fd..326e6323 100644
  pub fn mode_get(
      terminal_: Terminal,
      tag: modes.ModeTag.Backing,
---
+-- 
 2.50.1 (Apple Git-155)

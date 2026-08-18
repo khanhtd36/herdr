@@ -705,13 +705,15 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
 ///
 /// If the cursor is at an idle prompt, the entire active screen is
 /// cleared. Otherwise -- mid-command output, or no shell integration --
-/// only rows strictly above the cursor's row are erased in place
-/// (VT100 ED1 semantics via `clearRows`; the cursor's own row and
-/// everything below it is untouched). Real Ghostty's own clear_screen
-/// fallback uses `eraseActive` instead, which physically removes and
-/// shifts pages; that does not reliably erase the full requested range
-/// when the active area spans more than one internal page (e.g. a
-/// still-growing buffer that has not yet triggered real scrollback).
+/// rows strictly above the cursor's row are erased via `eraseActive`,
+/// exactly as real Ghostty's own clear_screen fallback does. That
+/// physically removes those rows and shifts the survivors up, so the
+/// cursor's row (typically the shell's prompt) ends up at the top of
+/// the screen. This shift is the entire reason Cmd+K appears to "move
+/// the prompt to the top left" even with no shell integration and
+/// nothing written to the pty -- so it must not be replaced with an
+/// in-place clear such as `clearRows`, which erases the same cells but
+/// leaves the prompt stranded wherever it already was.
 ///
 /// Returns whether the cursor was at an idle prompt (i.e. whether the
 /// full-screen branch ran), so callers can decide whether to also
@@ -726,11 +728,18 @@ pub fn clear_screen(terminal_: Terminal) callconv(lib.calling_conv) bool {
         primary.clearRows(.{ .active = .{} }, null, false);
         primary.cursor.pending_wrap = false;
     } else if (primary.cursor.y > 0) {
-        primary.clearRows(
-            .{ .active = .{ .y = 0 } },
-            .{ .active = .{ .y = primary.cursor.y - 1 } },
-            false,
-        );
+        primary.eraseActive(primary.cursor.y - 1);
+        // `eraseActive` physically removes rows and shifts the survivors
+        // up, but only marks the shifted rows dirty. The rows regrown at
+        // the bottom to refill the active area keep their stale dirty
+        // state, so a differential renderer never repaints them and the
+        // erased content stays visible on screen. Mark the whole active
+        // area dirty so the next render reflects the shift.
+        var y: size.CellCountInt = 0;
+        while (y < primary.pages.rows) : (y += 1) {
+            const pin = primary.pages.pin(.{ .active = .{ .y = y } }) orelse break;
+            pin.markDirty();
+        }
     }
     return at_prompt;
 }

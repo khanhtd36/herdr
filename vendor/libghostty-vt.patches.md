@@ -73,15 +73,19 @@ its prompt, instead of leaving the cursor stranded with no prompt
 visible. `ghostty_terminal_clear_screen` always erases scrollback, and
 clears the whole active screen only when `cursorIsAtPrompt()` says the
 cursor is at an idle, shell-integration-reported prompt -- otherwise it
-erases only rows above the cursor in place (VT100 ED1 semantics via
-`Screen.clearRows`, not `Screen.eraseActive` as real Ghostty's own
-`Termio.clearScreen` uses for this fallback: `eraseActive` physically
-removes and shifts pages, and does not reliably erase the full
-requested range once the active area spans more than one internal
-page, e.g. a still-growing buffer such as a fresh SSH session's login
-banner that hasn't yet triggered real scrollback), so the screen isn't
-left blank with a stranded cursor when there's no shell integration to
-redraw a prompt afterward. It returns that same prompt determination so
+erases only rows above the cursor via `Screen.eraseActive`, exactly as
+real Ghostty's own `Termio.clearScreen` does, so the screen isn't left
+blank with a stranded cursor when there's no shell integration to
+redraw a prompt afterward. `eraseActive` physically removes those rows
+and shifts the survivors up, which is what actually lands the shell's
+prompt at the top left without writing anything to the pty; an in-place
+clear such as `Screen.clearRows` erases the same cells but leaves the
+prompt stranded at its old row, so it is not a valid substitute.
+`eraseActive` does, however, mark only the shifted rows dirty and not
+the rows regrown at the bottom to refill the active area, which leaves
+a differential renderer such as herdr's painting stale content below
+the prompt; this patch therefore marks the whole active area dirty
+after the erase. It returns that same prompt determination so
 callers can decide whether to send a form-feed byte to the pty: sending
 that byte unconditionally would risk injecting a control byte into
 whatever is actually reading the pty (a running command, or a
@@ -100,7 +104,9 @@ row is) to fight the mismatch instead of landing where it should. An
 earlier version of this patch added a separate
 `ghostty_terminal_cursor_home` and called it before sending the form
 feed; that was removed once this exact mismatch was diagnosed as the
-cause of the redrawn prompt landing at the wrong row.
+cause of the redrawn prompt landing at the wrong row. In the
+not-at-prompt branch no repositioning is needed at all, because
+`eraseActive`'s row shift carries the cursor to the top on its own.
 
 remove when: libghostty-vt exposes an equivalent C API function for a
 primary-screen-targeted, prompt-aware erase-display-and-history

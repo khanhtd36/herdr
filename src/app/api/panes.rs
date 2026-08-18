@@ -1666,16 +1666,12 @@ impl App {
         // which it returns. Only that case also nudges the shell to
         // redraw its prompt -- always false while an alternate-screen
         // program (vim, tmux) is active, or when there's no shell
-        // integration at all. Deliberately does not reposition the
-        // cursor locally: real Ghostty doesn't either (Termio.zig's
-        // clearScreen), relying entirely on the shell's own response to
-        // the form feed (zle/readline's clear-screen widget, which
-        // repositions and redraws on its own). Doing it locally first
-        // would silently move herdr's cursor state without going
-        // through the pty, so the shell -- computing its own
-        // repositioning relative to what it still thinks the cursor row
-        // is -- ends up fighting that mismatch instead of landing at
-        // the top.
+        // integration at all. Neither branch repositions the cursor
+        // explicitly, matching real Ghostty (Termio.zig's clearScreen).
+        // In the not-at-prompt branch the prompt still reaches the top
+        // of the screen, because erasing the rows above it physically
+        // removes them and shifts it up; in the at-prompt branch the
+        // shell's own response to the form feed below does the redraw.
         if runtime.clear_screen() {
             // Form feed: the byte real terminals send for Ctrl+L /
             // "clear screen", which readline/zle trap to redraw their
@@ -4363,9 +4359,12 @@ mod tests {
         let cursor_after = runtime_after
             .cursor_state(ratatui::layout::Rect::new(0, 0, 20, 5), true)
             .unwrap();
-        // Rows above the cursor's row are cleared in place (VT100 ED1
-        // semantics): the cursor does not move.
-        assert_eq!((cursor_after.x, cursor_after.y), (16, 1));
+        // Rows above the cursor are physically removed and the survivors
+        // shift up, so the cursor's row lands at the top of the screen.
+        // That shift -- not any cursor repositioning of our own -- is
+        // what puts the shell's prompt back at the top left, and is why
+        // this matches real Ghostty's Cmd+K without shell integration.
+        assert_eq!((cursor_after.x, cursor_after.y), (16, 0));
         assert!(written.try_recv().is_err());
     }
 
