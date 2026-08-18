@@ -1,47 +1,91 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Khanh Truong <khanhtd36@gmail.com>
 Date: Mon, 17 Aug 2026 12:51:16 +0700
-Subject: [PATCH] vendor(libghostty-vt): add ghostty_terminal_clear_screen C
- API
+Subject: [PATCH] vendor(libghostty-vt): add prompt-aware terminal
+ clear_screen C API
 
-Export a new FFI function that erases the primary screen's active
-content and scrollback history without touching cursor position,
-colors, or terminal modes. It always targets the primary screen
-directly, so it is safe to call while the alternate screen (vim,
-tmux, etc.) is active.
+Export ghostty_terminal_clear_screen(): erases the primary screen's
+scrollback history always, and its active content according to
+whether the cursor is at an idle shell prompt (OSC 133
+semantic-prompt state, via the existing upstream
+Terminal.cursorIsAtPrompt() -- already used internally by real
+Ghostty's own clear_screen keybind action). If at a prompt, the
+entire active screen is cleared. Otherwise -- mid-command output, or
+no shell integration -- only rows strictly above the cursor's row are
+erased, so the screen is never left blank with a stranded cursor when
+there is no shell integration to redraw a prompt afterward. It always
+targets the primary screen directly (not whichever screen is active),
+so it is safe to call while the alternate screen (vim, tmux) is
+active. Returns whether the cursor was at an idle prompt, so callers
+can decide whether to nudge the shell to redraw its prompt, using the
+same prompt determination this function itself used.
+
+The not-at-prompt branch uses Screen.eraseActive, the same primitive
+real Ghostty's own Termio.clearScreen uses for this fallback. That
+physically removes the rows above the cursor and shifts the survivors
+up, so the cursor's row -- typically the shell's prompt -- ends up at
+the top of the screen. That shift is the entire mechanism by which
+Cmd+K appears to "move the prompt to the top left" with no shell
+integration and nothing written to the pty, so it must not be
+replaced by an in-place clear such as Screen.clearRows: that erases
+the same cells but leaves the prompt stranded at its old row.
+
+eraseActive marks only the shifted rows dirty, not the rows regrown
+at the bottom to refill the active area. A differential renderer such
+as herdr's therefore never repaints those rows and leaves the erased
+content visible below the prompt. This patch marks the whole active
+area dirty after the erase so the next render reflects the shift.
+
+Cursor position is never touched explicitly by this function, in
+either branch, matching real Ghostty's own clear_screen action
+exactly: the at-prompt branch relies entirely on the shell's own
+response to a form-feed byte (zle/readline's clear-screen widget) to
+redraw and reposition its prompt, and the not-at-prompt branch needs
+no repositioning because eraseActive's row shift carries the cursor
+to the top on its own. Repositioning the cursor locally first --
+before the shell's own response arrives -- would silently move it
+without going through the pty, so the shell (which computes its own
+repositioning relative to what it still thinks the cursor row is)
+ends up fighting that mismatch instead of landing where it should.
 
 Vendored base: c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3
 ---
- .../libghostty-vt/include/ghostty/vt/terminal.h | 17 +++++++++++++++++
- vendor/libghostty-vt/src/lib_vt.zig             |  1 +
- vendor/libghostty-vt/src/terminal/c/main.zig    |  1 +
- .../libghostty-vt/src/terminal/c/terminal.zig   | 15 +++++++++++++++
- 4 files changed, 34 insertions(+)
-
 diff --git a/vendor/libghostty-vt/include/ghostty/vt/terminal.h b/vendor/libghostty-vt/include/ghostty/vt/terminal.h
-index 26ee0c0b..8f2393da 100644
+index 26ee0c0b..5676a4e8 100644
 --- a/vendor/libghostty-vt/include/ghostty/vt/terminal.h
 +++ b/vendor/libghostty-vt/include/ghostty/vt/terminal.h
-@@ -1239,6 +1239,23 @@ GHOSTTY_API void ghostty_terminal_free(GhosttyTerminal terminal);
+@@ -1239,6 +1239,35 @@ GHOSTTY_API void ghostty_terminal_free(GhosttyTerminal terminal);
   */
  GHOSTTY_API void ghostty_terminal_reset(GhosttyTerminal terminal);
  
 +/**
-+ * Erase the primary screen's active content and scrollback history.
++ * Erase the primary screen's scrollback history always, and its active
++ * content according to whether the cursor is at an idle shell prompt
++ * (based on OSC 133 semantic-prompt markers the shell has reported).
++ * Colors, terminal modes, and cursor position are never touched --
++ * callers that also want the shell to redraw its prompt should nudge
++ * it (e.g. a form feed byte through the pty) rather than repositioning
++ * the cursor locally, the same way real Ghostty's own clear_screen
++ * action does. It always targets the primary screen specifically,
++ * regardless of which screen is currently active, so it is safe to
++ * call while the alternate screen (e.g. a fullscreen program like vim
++ * or tmux) is active: the running program's display is left completely
++ * untouched, and the primary screen is clean when the program exits.
 + *
-+ * Unlike ghostty_terminal_reset(), this does not touch cursor position,
-+ * colors, or terminal modes -- it is a pure visual clear. It always
-+ * targets the primary screen specifically, regardless of which screen is
-+ * currently active, so it is safe to call while the alternate screen
-+ * (e.g. a fullscreen program like vim or tmux) is active: the running
-+ * program's display is left completely untouched, and the primary screen
-+ * is clean when the program exits.
++ * If the cursor is at an idle prompt, the entire active screen is
++ * cleared. Otherwise -- mid-command output, or no shell integration --
++ * only rows strictly above the cursor's row are erased, matching real
++ * Ghostty's own clear_screen action: this avoids leaving the screen
++ * blank with no visible content when there is no shell integration
++ * available to redraw a prompt afterward.
 + *
 + * @param terminal The terminal handle (may be NULL, in which case this is a no-op)
++ * @return whether the cursor was at an idle prompt (i.e. whether the
++ *         full-screen branch ran)
 + *
 + * @ingroup terminal
 + */
-+GHOSTTY_API void ghostty_terminal_clear_screen(GhosttyTerminal terminal);
++GHOSTTY_API bool ghostty_terminal_clear_screen(GhosttyTerminal terminal);
 +
  /**
   * Resize the terminal to the given dimensions.
@@ -71,26 +115,66 @@ index 37dc5768..f9401b0d 100644
  pub const terminal_set = terminal.set;
  pub const terminal_vt_write = terminal.vt_write;
 diff --git a/vendor/libghostty-vt/src/terminal/c/terminal.zig b/vendor/libghostty-vt/src/terminal/c/terminal.zig
-index a896c0fd..f222687a 100644
+index a896c0fd..411642a4 100644
 --- a/vendor/libghostty-vt/src/terminal/c/terminal.zig
 +++ b/vendor/libghostty-vt/src/terminal/c/terminal.zig
-@@ -689,6 +689,21 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
+@@ -689,6 +689,61 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
      t.fullReset();
  }
  
-+/// Erase the primary screen's active content and scrollback history, in
-+/// place. Unlike `reset`, this does not touch cursor position, colors,
-+/// or terminal modes -- it is a pure visual clear. It always targets the
-+/// primary screen specifically (not whichever screen is currently active),
-+/// so it is safe to call while the alternate screen (e.g. vim, tmux) is
++/// Erase the primary screen's scrollback history always, and its active
++/// content according to whether the cursor is at an idle shell prompt
++/// (see `Terminal.cursorIsAtPrompt`). Colors, terminal modes, and
++/// cursor position are never touched -- callers that also want the
++/// shell to redraw its prompt should nudge it (e.g. a form feed byte
++/// through the pty) rather than repositioning the cursor locally here,
++/// the same way real Ghostty's own clear_screen action does: the
++/// shell's own redraw is what actually repositions things, and a local
++/// reposition first would only fight it. It always targets the primary
++/// screen specifically (not whichever screen is currently active), so
++/// it is safe to call while the alternate screen (e.g. vim, tmux) is
 +/// active: the running program's display is left completely untouched,
 +/// and the primary screen is clean when the program exits.
-+pub fn clear_screen(terminal_: Terminal) callconv(lib.calling_conv) void {
-+    const t: *ZigTerminal = (terminal_ orelse return).terminal;
-+    const primary = t.screens.get(.primary) orelse return;
-+    primary.clearRows(.{ .active = .{} }, null, false);
-+    primary.cursor.pending_wrap = false;
++///
++/// If the cursor is at an idle prompt, the entire active screen is
++/// cleared. Otherwise -- mid-command output, or no shell integration --
++/// rows strictly above the cursor's row are erased via `eraseActive`,
++/// exactly as real Ghostty's own clear_screen fallback does. That
++/// physically removes those rows and shifts the survivors up, so the
++/// cursor's row (typically the shell's prompt) ends up at the top of
++/// the screen. This shift is the entire reason Cmd+K appears to "move
++/// the prompt to the top left" even with no shell integration and
++/// nothing written to the pty -- so it must not be replaced with an
++/// in-place clear such as `clearRows`, which erases the same cells but
++/// leaves the prompt stranded wherever it already was.
++///
++/// Returns whether the cursor was at an idle prompt (i.e. whether the
++/// full-screen branch ran), so callers can decide whether to also
++/// nudge the shell to redraw its prompt.
++pub fn clear_screen(terminal_: Terminal) callconv(lib.calling_conv) bool {
++    const t: *ZigTerminal = (terminal_ orelse return false).terminal;
++    const primary = t.screens.get(.primary) orelse return false;
 +    primary.eraseHistory(null);
++
++    const at_prompt = t.cursorIsAtPrompt();
++    if (at_prompt) {
++        primary.clearRows(.{ .active = .{} }, null, false);
++        primary.cursor.pending_wrap = false;
++    } else if (primary.cursor.y > 0) {
++        primary.eraseActive(primary.cursor.y - 1);
++        // `eraseActive` physically removes rows and shifts the survivors
++        // up, but only marks the shifted rows dirty. The rows regrown at
++        // the bottom to refill the active area keep their stale dirty
++        // state, so a differential renderer never repaints them and the
++        // erased content stays visible on screen. Mark the whole active
++        // area dirty so the next render reflects the shift.
++        var y: size.CellCountInt = 0;
++        while (y < primary.pages.rows) : (y += 1) {
++            const pin = primary.pages.pin(.{ .active = .{ .y = y } }) orelse break;
++            pin.markDirty();
++        }
++    }
++    return at_prompt;
 +}
 +
  pub fn mode_get(
@@ -98,4 +182,3 @@ index a896c0fd..f222687a 100644
      tag: modes.ModeTag.Backing,
 -- 
 2.50.1 (Apple Git-155)
-

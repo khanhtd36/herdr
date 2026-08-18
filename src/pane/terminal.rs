@@ -230,16 +230,8 @@ impl PaneTerminal {
         self.ghostty.scroll_reset();
     }
 
-    pub fn clear_screen(&self) {
-        self.ghostty.clear_screen();
-    }
-
-    pub fn cursor_is_at_prompt(&self) -> bool {
-        self.ghostty.cursor_is_at_prompt()
-    }
-
-    pub fn cursor_home(&self) {
-        self.ghostty.cursor_home();
+    pub fn clear_screen(&self) -> bool {
+        self.ghostty.clear_screen()
     }
 
     pub fn set_scroll_offset_from_bottom(&self, lines: usize) {
@@ -1643,23 +1635,11 @@ impl GhosttyPaneTerminal {
         }
     }
 
-    pub fn clear_screen(&self) {
-        if let Ok(mut core) = self.core.lock() {
-            core.terminal.clear_screen();
-        }
-    }
-
-    pub fn cursor_is_at_prompt(&self) -> bool {
+    pub fn clear_screen(&self) -> bool {
         self.core
             .lock()
-            .map(|core| core.terminal.cursor_is_at_prompt())
+            .map(|mut core| core.terminal.clear_screen())
             .unwrap_or(false)
-    }
-
-    pub fn cursor_home(&self) {
-        if let Ok(mut core) = self.core.lock() {
-            core.terminal.cursor_home();
-        }
     }
 
     pub fn set_scroll_offset_from_bottom(&self, lines: usize) {
@@ -5949,6 +5929,56 @@ mod tests {
             crate::protocol::underline_style_from_modifier(cell.modifier),
             3
         );
+    }
+
+    #[test]
+    fn clear_screen_not_at_prompt_erases_all_rows_above_cursor_without_scrollback() {
+        // Regression test: before switching the not-at-prompt branch from
+        // `Screen.eraseActive` to `Screen.clearRows`, this reproduced a
+        // real bug where only a small prefix of rows above the cursor
+        // got erased -- everything past roughly the first internal page
+        // boundary survived untouched, even though nothing had ever
+        // scrolled into real history yet. Many separate incremental
+        // writes (matching real streamed pty output, e.g. an SSH login
+        // banner) are what actually grows the active area across
+        // multiple internal pages; a single batched write does not
+        // reproduce it.
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(20, 25, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+        let backend = ratatui::backend::TestBackend::new(20, 25);
+        let mut rterm = ratatui::Terminal::new(backend).unwrap();
+
+        for i in 0..19 {
+            {
+                let mut core = pane.core.lock().unwrap();
+                core.terminal.write(format!("LINE{i:02}\r\n").as_bytes());
+            }
+            rterm
+                .draw(|frame| pane.render(frame, Rect::new(0, 0, 20, 25), true))
+                .unwrap();
+            let _ = pane.collect_dirty_patch(20, 25);
+        }
+        {
+            let mut core = pane.core.lock().unwrap();
+            core.terminal.write(b"PROMPT>");
+        }
+        rterm
+            .draw(|frame| pane.render(frame, Rect::new(0, 0, 20, 25), true))
+            .unwrap();
+        let _ = pane.collect_dirty_patch(20, 25);
+
+        let at_prompt = pane.clear_screen();
+        assert!(!at_prompt, "no OSC 133 markers were sent");
+
+        let text = pane.visible_text();
+        for i in 0..19 {
+            assert!(
+                !text.contains(&format!("LINE{i:02}")),
+                "LINE{i:02} should have been erased, got: {text}"
+            );
+        }
+        assert!(text.contains("PROMPT>"), "got: {text}");
     }
 
     #[test]
