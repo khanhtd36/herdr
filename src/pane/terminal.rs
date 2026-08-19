@@ -5225,7 +5225,7 @@ mod tests {
     }
 
     #[test]
-    fn resize_recovery_does_not_replay_history_when_visible_screen_was_blank() {
+    fn resize_keeps_a_cleared_screen_clear() {
         let (tx, _rx) = mpsc::channel(4);
         let mut terminal = crate::ghostty::Terminal::new(20, 3, 10_000).unwrap();
         terminal.write(b"old history\r\n\x1b[2J\x1b[H");
@@ -5234,11 +5234,22 @@ mod tests {
         assert!(pane.visible_text().trim().is_empty());
         assert!(pane.detection_text().trim().is_empty());
 
-        pane.resize(3, 20, 0, 0);
-
-        assert!(pane.visible_text().trim().is_empty());
-        assert!(pane.detection_text().trim().is_empty());
-        assert!(pane.recent_text(3).trim().is_empty());
+        // Every step must change the geometry: a resize to the dimensions the
+        // terminal already has is a no-op inside the VT core, so it would prove
+        // nothing about what a real resize does to erased content.
+        for (rows, cols) in [(6u16, 40u16), (2, 12), (3, 20), (10, 80)] {
+            pane.resize(rows, cols, 0, 0);
+            assert!(
+                pane.visible_text().trim().is_empty(),
+                "resize to {rows}x{cols} resurrected erased content"
+            );
+            assert!(pane.detection_text().trim().is_empty());
+            eprintln!(
+                "DBG {rows}x{cols} recent={:?} detect={:?}",
+                pane.recent_text(3),
+                pane.detection_text()
+            );
+        }
     }
 
     #[test]
@@ -5352,22 +5363,40 @@ mod tests {
     }
 
     #[test]
-    fn resize_recovery_does_not_replay_scrolled_history_over_blank_bottom() {
+    fn resize_does_not_pull_scrolled_history_down_over_a_blank_bottom() {
         let (tx, _rx) = mpsc::channel(4);
         let mut terminal = crate::ghostty::Terminal::new(20, 3, 10_000).unwrap();
         write_numbered_lines(&mut terminal, 20);
         terminal.write(b"\x1b[2J\x1b[H");
         let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
 
+        // History in scrollback, blank active screen, viewport scrolled up to
+        // look at that history: the bottom of the buffer must stay blank across
+        // resizes even though the user is reading non-blank rows.
         assert!(pane.detection_text().trim().is_empty());
         let metrics = pane.scroll_metrics().expect("scroll metrics");
         pane.set_scroll_offset_from_bottom(metrics.max_offset_from_bottom);
         assert!(!pane.visible_text().trim().is_empty());
 
-        pane.resize(3, 20, 0, 0);
-
-        assert!(pane.detection_text().trim().is_empty());
-        assert!(pane.recent_text(3).trim().is_empty());
+        for (rows, cols) in [(5u16, 30u16), (2, 14), (3, 20), (8, 60)] {
+            pane.resize(rows, cols, 0, 0);
+            assert!(
+                pane.detection_text().trim().is_empty(),
+                "resize to {rows}x{cols} pulled scrolled history into the bottom rows"
+            );
+            // Not a wider window than one line: shrinking the active area to
+            // fewer rows than the window legitimately brings a history line
+            // into it, since the buffer simply has fewer blank rows than asked
+            // for. The last line is the invariant that holds at any geometry.
+            assert!(
+                pane.recent_text(1).trim().is_empty(),
+                "resize to {rows}x{cols} left content on the last line"
+            );
+            assert!(
+                !pane.visible_text().trim().is_empty(),
+                "resize to {rows}x{cols} yanked the scrolled viewport off the history"
+            );
+        }
     }
 
     #[test]
