@@ -74,6 +74,11 @@ pub struct Version {
 impl Version {
     pub fn parse(s: &str) -> Option<Self> {
         let s = s.strip_prefix('v').unwrap_or(s);
+        // Drop any prerelease/build suffix. `Version` is only ever compared as
+        // a release triple, and the suffix carries channel identity rather than
+        // ordering -- `build_info::version()` synthesizes one onto BASE_VERSION
+        // for non-stable channels, and a fork may carry one in Cargo.toml.
+        let s = s.split_once('-').map_or(s, |(base, _)| base);
         let parts: Vec<&str> = s.split('.').collect();
         if parts.len() != 3 {
             return None;
@@ -2472,6 +2477,23 @@ mod tests {
                 patch: 0
             })
         );
+    }
+
+    #[test]
+    fn parse_version_ignores_prerelease_suffix() {
+        // build_info::version() synthesizes `<base>-<channel>.<build_id>` for
+        // non-stable channels, and a fork may carry a suffix in Cargo.toml, so
+        // Version::current() must not choke on either.
+        let base = Version {
+            major: 0,
+            minor: 8,
+            patch: 0,
+        };
+        for s in ["0.8.0-preview.3", "v0.8.0-preview", "0.8.0-khanhtd36.4"] {
+            assert_eq!(Version::parse(s), Some(base.clone()), "failed to parse {s}");
+        }
+        // A suffix cannot rescue an otherwise malformed version.
+        assert_eq!(Version::parse("0.8-preview.3"), None);
     }
 
     #[test]
