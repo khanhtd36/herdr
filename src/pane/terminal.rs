@@ -5242,6 +5242,82 @@ mod tests {
     }
 
     #[test]
+    fn resize_clears_marked_prompt_so_shell_redraw_does_not_stack() {
+        // Replay of a live zsh + starship pane being drag-resized, reduced to
+        // the geometry and the bytes that matter.
+        //
+        // The shell answers every SIGWINCH by moving up one row, erasing to
+        // the end of the screen, and reprinting a prompt padded to the width
+        // it just read. `$fill` makes that first line exactly as wide as the
+        // pane, so the moment the pane narrows, reflow rewraps it onto two
+        // rows and the shell's one-row move-up misses the top one.
+        //
+        // Ghostty's answer is to clear the marked prompt rows before
+        // reflowing, which herdr opts into with
+        // `ghostty_terminal_set_shell_redraws_prompt`. That clear has to find
+        // the top of the prompt, and zsh emits OSC 133 A only when it prints
+        // a *new* prompt, never on a redraw -- so after the first redraw the
+        // rows carry `.prompt_continuation` and no `.prompt` anchor at all.
+        // The clear must still walk to the top of that continuation run; if
+        // it gives up and starts at the cursor row instead, every prompt row
+        // above the cursor survives and the copies stack up one per resize.
+        let path = "~/workspace/gjoffice";
+        // Starship pads the first line out to the pane width, but never
+        // narrower than the text it already holds.
+        let prompt = |cols: usize| {
+            let width = cols.max(path.len() + 2);
+            format!("{path} {}\r\n> ", " ".repeat(width - path.len() - 1))
+        };
+        let redraw = b"\r\r\x1b[A\x1b[0m\x1b[27m\x1b[24m\x1b[J";
+
+        let (tx, _rx) = mpsc::channel(4);
+        let mut terminal = crate::ghostty::Terminal::new(45, 27, 10_000).unwrap();
+        terminal.write(b"\x1b]133;A\x1b\\");
+        terminal.write(prompt(45).as_bytes());
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+        // Count across the soft wraps a narrow pane introduces.
+        let copies =
+            |p: &GhosttyPaneTerminal| p.recent_text(500).replace('\n', "").matches(path).count();
+        assert_eq!(copies(&pane), 1);
+
+        // One drag in, back out, and in again, at the geometry the live pane
+        // reported. Widening past the point where the prompt no longer wraps
+        // is what strands the `.prompt` anchor.
+        for (rows, cols) in [
+            (27u16, 40u16),
+            (27, 35),
+            (27, 29),
+            (26, 26),
+            (26, 21),
+            (26, 15),
+            (26, 19),
+            (26, 24),
+            (26, 29),
+            (27, 32),
+            (27, 38),
+            (27, 43),
+            (27, 38),
+            (27, 33),
+            (27, 29),
+            (26, 25),
+            (26, 20),
+            (26, 15),
+            (26, 12),
+        ] {
+            pane.resize(rows, cols, 0, 0);
+            let mut core = pane.core.lock().unwrap();
+            core.terminal.write(redraw);
+            core.terminal.write(prompt(usize::from(cols)).as_bytes());
+        }
+
+        assert_eq!(
+            copies(&pane),
+            1,
+            "a drag-resize must leave exactly one prompt, not a stack of orphans"
+        );
+    }
+
+    #[test]
     fn repeated_resizes_never_duplicate_scrollback_history() {
         let (tx, _rx) = mpsc::channel(4);
         let mut terminal = crate::ghostty::Terminal::new(80, 24, 10_000).unwrap();

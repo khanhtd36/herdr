@@ -1296,6 +1296,33 @@ GHOSTTY_API GhosttyResult ghostty_terminal_resize(GhosttyTerminal terminal,
                                       uint32_t cell_height_px);
 
 /**
+ * Set whether the shell is assumed to redraw its own prompt after a resize.
+ *
+ * When enabled, a resize clears the existing prompt lines before reflowing,
+ * so the shell's own redraw replaces them instead of stacking a second copy
+ * below the reflowed original. This only takes effect once the shell has
+ * marked a prompt with OSC 133, since the clear is gated on the cursor not
+ * being on command output.
+ *
+ * libghostty-vt defaults this to false for embedders that may not have shell
+ * integration installed, whereas real Ghostty runs with it enabled. Embedders
+ * whose shells do emit OSC 133 should turn it on to get Ghostty's own resize
+ * behavior.
+ *
+ * Only the boolean states are exposed here; the "last" variant (Bash, which
+ * redraws only the final prompt line) is reachable through
+ * OSC 133;A;redraw=last.
+ *
+ * @param terminal The terminal handle (may be NULL, in which case this is a no-op)
+ * @param value Whether the shell redraws its prompt after a resize
+ *
+ * @ingroup terminal
+ */
+GHOSTTY_API void ghostty_terminal_set_shell_redraws_prompt(
+    GhosttyTerminal terminal,
+    bool value);
+
+/**
  * Set an option on the terminal.
  *
  * Configures terminal callbacks and associated state such as the

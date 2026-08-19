@@ -266,6 +266,7 @@ comptime {
         @export(&c.terminal_compress, .{ .name = "ghostty_terminal_compress" });
         @export(&c.terminal_mode_get, .{ .name = "ghostty_terminal_mode_get" });
         @export(&c.terminal_mode_set, .{ .name = "ghostty_terminal_mode_set" });
+        @export(&c.terminal_set_shell_redraws_prompt, .{ .name = "ghostty_terminal_set_shell_redraws_prompt" });
         @export(&c.terminal_get, .{ .name = "ghostty_terminal_get" });
         @export(&c.terminal_get_multi, .{ .name = "ghostty_terminal_get_multi" });
         @export(&c.terminal_select_word, .{ .name = "ghostty_terminal_select_word" });

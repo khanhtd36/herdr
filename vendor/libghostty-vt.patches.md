@@ -118,3 +118,96 @@ verification:
 ```sh
 cargo nextest run --locked pane_clear_screen
 ```
+
+## 0003 add shell_redraws_prompt C API setter
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0003-add-shell-redraws-prompt-setter.patch`
+
+herdr issue: not opened (private fork, no upstream tracking)
+
+upstream discussion: not opened; libghostty-vt already implements the
+behavior in `Terminal.resize` (which passes
+`flags.shell_redraws_prompt` to `Screen.resize` as `prompt_redraw`),
+but the C API forces the flag to `.false` in `terminal_new` and exposes
+no way to set it, so embedders can only reach it from inside the VT
+byte stream via `OSC 133;A;redraw=`.
+
+upstream pr: not opened
+
+vendored base: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
+
+local files:
+
+- `vendor/libghostty-vt/src/terminal/c/terminal.zig`
+- `vendor/libghostty-vt/src/terminal/c/main.zig`
+- `vendor/libghostty-vt/src/lib_vt.zig`
+- `vendor/libghostty-vt/include/ghostty/vt/terminal.h`
+
+reason: A shell that marks its prompt with OSC 133 redraws that prompt
+after every SIGWINCH, moving up one row and erasing to end of screen.
+When the prompt line fills the terminal width -- any right-aligned
+prompt, such as starship's `$fill` -- reflow rewraps it onto two rows,
+so that erase misses the top row and orphans a copy of the prompt. Real
+Ghostty never shows this because it runs with `shell_redraws_prompt`
+true and therefore clears marked prompt lines before reflowing; herdr,
+going through the C API, got `.false` and the orphans. A 15-step
+drag-resize left 7 stacked prompts instead of 1. The clear stays gated
+inside the core on the cursor not being on command output, so shells
+without OSC 133 shell integration are unaffected either way.
+
+remove when: libghostty-vt exposes its own C API for configuring
+`shell_redraws_prompt` (or stops forcing it to `.false` in
+`terminal_new`), and the verification below passes without this patch.
+
+verification:
+
+```sh
+cargo nextest run --locked resize_clears_marked_prompt_so_shell_redraw_does_not_stack
+```
+
+## 0004 return the topmost prompt continuation from promptIterator left_up
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0004-prompt-iterator-left-up-topmost-continuation.patch`
+
+herdr issue: not opened (private fork, no upstream tracking)
+
+upstream discussion: not opened
+
+upstream pr: not opened
+
+vendored base: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
+
+local files:
+
+- `vendor/libghostty-vt/src/terminal/PageList.zig`
+
+reason: `PromptIterator.nextLeftUp` walks up from a `.prompt_continuation`
+row looking for the `.prompt` row that anchors the prompt. When it finds a
+`.none` row it correctly returns `end_pin`, the topmost continuation it
+reached. When it instead runs out of rows -- the anchor scrolled out of
+scrollback, or was never written -- it returned `p`, the row it started
+from, discarding every continuation it had just walked over.
+
+That fallback is what patch 0003's resize-time prompt clear lands on in
+practice. zsh emits `OSC 133;A` only when it prints a *new* prompt, never
+on the redraw it does for a SIGWINCH, so after the first drag-resize the
+prompt's rows carry nothing but `.prompt_continuation` and the `.prompt`
+anchor is gone. The clear then started at the cursor row, left every
+prompt row above it standing, and reflow stranded them as visible
+duplicates -- one more copy per resize, which is the exact stacking
+patch 0003 was supposed to prevent. Verified against a verbatim replay of
+a live zsh + starship pane: 19 drag steps produced 5 stacked prompts
+before this patch and exactly 1 after.
+
+remove when: upstream `nextLeftUp` returns the topmost continuation on the
+exhausted-rows path, and the verification below passes without this patch.
+
+verification:
+
+```sh
+cargo nextest run --locked resize_clears_marked_prompt_so_shell_redraw_does_not_stack
+```
