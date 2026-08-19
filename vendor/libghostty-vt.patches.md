@@ -39,11 +39,48 @@ cargo nextest run --locked grapheme_cluster_mode_renders_flag_emoji_in_single_wi
 cargo nextest run --locked grapheme_cluster_mode_renders_zwj_family_in_single_wide_cell
 ```
 
-## 0002 add prompt-aware terminal clear_screen C API
+## 0002 expose modifyOtherKeys mode through terminal data
 
 status: active
 
-patch: `vendor/patches/libghostty-vt/0002-add-terminal-clear-screen-c-api.patch`
+patch: `vendor/patches/libghostty-vt/0002-expose-modify-other-keys-mode.patch`
+
+herdr issue: none; fixes the performance regression exposed by
+https://github.com/herdrdev/herdr/pull/2303
+
+upstream discussion: not opened
+
+upstream pr: not opened
+
+vendored base: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
+
+local files:
+
+- `vendor/libghostty-vt/include/ghostty/vt/terminal.h`
+- `vendor/libghostty-vt/src/terminal/c/terminal.zig`
+
+reason: Herdr must know whether xterm modifyOtherKeys mode 2 is active to
+request printable key releases from the outer terminal. The formatter API can
+recover this fact only by formatting the active screen and scrollback. A typed
+terminal-data query exposes the authoritative scalar without formatting or
+allocation.
+
+remove when: the vendored source exposes an equivalent scalar query for
+modifyOtherKeys mode 2 and Herdr can use it without this patch.
+
+verification:
+
+```sh
+cargo nextest run --locked modify_other_keys_query_tracks_mode_two
+cargo nextest run --locked host_report_all_supplies_printable_releases_for_event_type_only_panes
+python3 -m unittest scripts.test_vendor_libghostty_vt scripts.test_ui_hot_path_architecture
+```
+
+## 0003 add prompt-aware terminal clear_screen C API
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0003-add-terminal-clear-screen-c-api.patch`
 
 herdr issue: not opened (private fork, no upstream tracking)
 
@@ -119,11 +156,11 @@ verification:
 cargo nextest run --locked pane_clear_screen
 ```
 
-## 0003 add shell_redraws_prompt C API setter
+## 0004 add shell_redraws_prompt C API setter
 
 status: active
 
-patch: `vendor/patches/libghostty-vt/0003-add-shell-redraws-prompt-setter.patch`
+patch: `vendor/patches/libghostty-vt/0004-add-shell-redraws-prompt-setter.patch`
 
 herdr issue: not opened (private fork, no upstream tracking)
 
@@ -167,11 +204,11 @@ verification:
 cargo nextest run --locked resize_clears_marked_prompt_so_shell_redraw_does_not_stack
 ```
 
-## 0004 return the topmost prompt continuation from promptIterator left_up
+## 0005 return the topmost prompt continuation from promptIterator left_up
 
 status: active
 
-patch: `vendor/patches/libghostty-vt/0004-prompt-iterator-left-up-topmost-continuation.patch`
+patch: `vendor/patches/libghostty-vt/0005-prompt-iterator-left-up-topmost-continuation.patch`
 
 herdr issue: not opened (private fork, no upstream tracking)
 
@@ -192,14 +229,14 @@ reached. When it instead runs out of rows -- the anchor scrolled out of
 scrollback, or was never written -- it returned `p`, the row it started
 from, discarding every continuation it had just walked over.
 
-That fallback is what patch 0003's resize-time prompt clear lands on in
+That fallback is what patch 0004's resize-time prompt clear lands on in
 practice. zsh emits `OSC 133;A` only when it prints a *new* prompt, never
 on the redraw it does for a SIGWINCH, so after the first drag-resize the
 prompt's rows carry nothing but `.prompt_continuation` and the `.prompt`
 anchor is gone. The clear then started at the cursor row, left every
 prompt row above it standing, and reflow stranded them as visible
 duplicates -- one more copy per resize, which is the exact stacking
-patch 0003 was supposed to prevent. Verified against a verbatim replay of
+patch 0004 was supposed to prevent. Verified against a verbatim replay of
 a live zsh + starship pane: 19 drag steps produced 5 stacked prompts
 before this patch and exactly 1 after.
 

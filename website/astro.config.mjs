@@ -225,7 +225,7 @@ export default defineConfig({
             { label: 'Socket API', translations: { ja: 'ソケット API', 'zh-CN': 'Socket API' }, slug: 'docs/socket-api' },
             { label: 'Integrations', translations: { ja: 'インテグレーション', 'zh-CN': '集成' }, slug: 'docs/integrations' },
             { label: 'Agent skill file', translations: { ja: 'エージェントスキルファイル', 'zh-CN': '智能体技能文件' }, slug: 'docs/agent-skill' },
-            { label: 'Windows beta', translations: { ja: 'Windows ベータ', 'zh-CN': 'Windows 测试版' }, slug: 'docs/windows-beta' },
+            { label: 'Windows support', translations: { ja: 'Windows サポート', 'zh-CN': 'Windows 支持' }, slug: 'docs/windows-beta' },
           ],
         },
         {

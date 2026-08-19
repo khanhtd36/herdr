@@ -15,14 +15,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-if ([string]::IsNullOrWhiteSpace($Channel)) {
-    $Channel = "stable"
-}
-
-# This fork ships a single "stable" channel on Windows; there is no separate
-# preview build.
-if ($Channel -notin @("stable", "preview")) {
-    Write-Error "Invalid Herdr channel '$Channel'. Use 'stable'."
+$channelWasExplicit = -not [string]::IsNullOrWhiteSpace($Channel)
+if ($channelWasExplicit -and $Channel -notin @("stable", "preview")) {
+    Write-Error "Invalid Herdr channel '$Channel'. Use 'stable' or 'preview'."
     exit 1
 }
 
@@ -374,6 +369,67 @@ function Test-HerdrReleaseComplete {
     return $true
 }
 
+function Move-DirectoryWithRetry {
+    param(
+        [string]$Source,
+        [string]$Destination,
+        [int]$TimeoutMilliseconds = 5000
+    )
+
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
+    while ($true) {
+        try {
+            [System.IO.Directory]::Move($Source, $Destination)
+            return
+        } catch {
+            $retryable = $false
+            $exception = $_.Exception
+            while ($null -ne $exception) {
+                if ($exception -is [System.IO.IOException] -or
+                    $exception -is [System.UnauthorizedAccessException]) {
+                    $retryable = $true
+                    break
+                }
+                $exception = $exception.InnerException
+            }
+            if (-not $retryable -or
+                [DateTime]::UtcNow -ge $deadline -or
+                -not (Test-Path -LiteralPath $Source -PathType Container) -or
+                (Test-Path -LiteralPath $Destination)) {
+                throw
+            }
+            Start-Sleep -Milliseconds 100
+        }
+    }
+}
+
+function Remove-DirectoryWithRetry {
+    param(
+        [string]$Path,
+        [int]$TimeoutMilliseconds = 5000
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $extendedPath = if ($fullPath.StartsWith("\\")) {
+        "\\?\UNC\" + $fullPath.TrimStart([char]'\')
+    } else {
+        "\\?\" + $fullPath
+    }
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
+    while (Test-Path -LiteralPath $Path) {
+        try {
+            [System.IO.Directory]::Delete($extendedPath, $true)
+            return
+        } catch {
+            if ([DateTime]::UtcNow -ge $deadline) {
+                Write-WarningStep "Herdr installed successfully but could not remove a temporary release backup at $Path."
+                return
+            }
+            Start-Sleep -Milliseconds 100
+        }
+    }
+}
+
 function Invoke-WithInstallLock {
     param(
         [string]$LockPath,
@@ -610,13 +666,57 @@ if ($useLocalPackage) {
         Format = $LocalPackageFormat
     }
 } else {
+    if (-not $channelWasExplicit) {
+        if (-not [string]::IsNullOrWhiteSpace($existingHerdr)) {
+            $detectedChannel = [string](& $existingHerdr channel show 2>$null | Select-Object -Last 1)
+            $detectedChannel = $detectedChannel.Trim()
+            if ($LASTEXITCODE -ne 0 -or $detectedChannel -notin @("stable", "preview")) {
+                throw "Could not determine the existing Herdr update channel. Rerun with -Channel stable or -Channel preview."
+            }
+            $Channel = $detectedChannel
+            Write-Step "Preserving existing Herdr $Channel channel"
+        } elseif (-not [string]::IsNullOrWhiteSpace($ManifestUrl) -and $ManifestUrl -match "/preview\.json$") {
+            $Channel = "preview"
+        } else {
+            $Channel = "stable"
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ManifestUrl)) {
+        $ManifestUrl = if ($Channel -eq "preview") {
+            "https://herdr.dev/preview.json"
+        } else {
+            "https://herdr.dev/latest.json"
+        }
+    }
+
     Write-Step "Fetching Herdr $Channel manifest"
     $manifest = ConvertTo-ManifestObject -Manifest (Invoke-RestMethod -Uri $ManifestUrl)
+    $manifestChannelProperty = $manifest.PSObject.Properties["channel"]
+    if (-not $channelWasExplicit -and $null -ne $manifestChannelProperty -and [string]$manifestChannelProperty.Value -eq "preview") {
+        $Channel = "preview"
+    }
+    $assetsProperty = $manifest.PSObject.Properties["assets"]
+    $assetProperty = if ($null -eq $assetsProperty) {
+        $null
+    } else {
+        $assetsProperty.Value.PSObject.Properties[$target]
+    }
+    if ($null -eq $assetProperty -and
+        -not $channelWasExplicit -and
+        $Channel -eq "stable" -and
+        $ManifestUrl -match "/latest\.json$") {
+        Write-WarningStep "The stable manifest does not include Windows yet; using preview during the stable-channel rollout."
+        $Channel = "preview"
+        $ManifestUrl = $ManifestUrl.Substring(0, $ManifestUrl.Length - "latest.json".Length) + "preview.json"
+        Write-Step "Fetching Herdr preview manifest"
+        $manifest = ConvertTo-ManifestObject -Manifest (Invoke-RestMethod -Uri $ManifestUrl)
+    }
+    $asset = Get-ManifestAsset -Manifest $manifest -Target $target
     if (-not [string]::IsNullOrWhiteSpace($ExpectedBuildId) -and [string]$manifest.build_id -ne $ExpectedBuildId) {
         throw "Preview manifest changed while updating. Expected build $ExpectedBuildId but found $($manifest.build_id). Run herdr update again."
     }
     $versionIdentity = Resolve-HerdrVersion -Manifest $manifest -SelectedChannel $Channel
-    $asset = Get-ManifestAsset -Manifest $manifest -Target $target
 }
 $safeVersionIdentity = $versionIdentity -replace '[^0-9A-Za-z._-]', '-'
 $releaseName = "$safeVersionIdentity-$targetTriple"
@@ -663,16 +763,13 @@ try {
                 [System.IO.Directory]::Move($releaseDir, $backupDir)
             }
             try {
-                [System.IO.Directory]::Move($stagingDir, $releaseDir)
+                Move-DirectoryWithRetry -Source $stagingDir -Destination $releaseDir
             } catch {
                 if ($null -ne $backupDir -and -not (Test-Path -LiteralPath $releaseDir)) {
                     [System.IO.Directory]::Move($backupDir, $releaseDir)
                 }
                 Write-WarningStep "Windows could not activate the downloaded release. Another process may have a package file open, such as antivirus or indexing. No incomplete release was activated. Run herdr update again."
                 throw
-            }
-            if ($null -ne $backupDir) {
-                Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
 
@@ -682,7 +779,7 @@ try {
             throw "Installed Herdr command failed verification: $releaseHerdr --version"
         }
         Get-ChildItem -LiteralPath $releasesDir -Force -Directory -Filter ".backup.$releaseName.*" -ErrorAction SilentlyContinue |
-            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            ForEach-Object { Remove-DirectoryWithRetry -Path $_.FullName }
 
         Set-ManagedJunction -LinkPath $currentDir -TargetPath $releaseDir -ManagedTargetPrefix $releasesDir
         Set-ManagedJunction -LinkPath $visibleBinDir -TargetPath $releaseDir -ManagedTargetPrefix $standaloneRoot -AllowLegacyHerdrBinMigration $allowLegacyVisibleBinMigration

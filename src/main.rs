@@ -159,7 +159,8 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 
 [update]
 # Update channel used by background version checks and `herdr update`.
-# This fork ships a single "stable" channel on all platforms, including Windows.
+# Stable builds default to "stable". Windows preview builds default to "preview"
+# so existing preview installs stay there until explicitly switched.
 # channel = "stable"
 
 # Check herdr.khanhtd36.dev for new Herdr versions in the background.

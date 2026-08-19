@@ -32,14 +32,14 @@ curl -fsSL https://herdr.dev/install.sh | sh
 herdr
 ```
 
-Windows preview beta:
+Windows:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -c "irm https://herdr.dev/install.ps1 | iex"
 herdr
 ```
 
-Homebrew, mise, and Nix installs, verification, and manual downloads: https://herdr.dev/docs/install/. Direct installs update with `herdr update`; package-manager installs update through that package manager. Check the version with `herdr --version`.
+Homebrew, mise, and Nix installs, verification, and manual downloads: https://herdr.dev/docs/install/. Direct installs use the stable channel by default and update with `herdr update`; preview is opt-in. Package-manager installs update through that package manager. Check the version with `herdr --version`.
 
 ## First-run walkthrough
 

@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::{layout::Rect, Frame};
+#[cfg(any(unix, test))]
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, error};
@@ -113,6 +114,7 @@ fn decscusr_cursor_shape(style: crate::ghostty::CursorVisualStyle, blinking: boo
     }
 }
 
+#[cfg(any(unix, test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputState {
     pub alternate_screen: bool,
@@ -128,6 +130,7 @@ pub struct InputState {
     pub color_scheme_reporting: bool,
 }
 
+#[cfg(test)]
 impl InputState {
     pub fn mouse_reporting_enabled(self) -> bool {
         self.mouse_protocol_mode.reporting_enabled()
@@ -389,8 +392,33 @@ impl PaneTerminal {
         Some((RetainedTextBuffer::new_search(cols, rows, 0), active_screen))
     }
 
+    #[cfg(any(unix, test))]
     pub fn input_state(&self) -> Option<InputState> {
         self.ghostty.input_state()
+    }
+
+    pub fn keyboard_report_all_requested(&self) -> bool {
+        self.ghostty.keyboard_report_all_requested()
+    }
+
+    pub fn bracketed_paste_enabled(&self) -> bool {
+        self.ghostty.bracketed_paste_enabled()
+    }
+
+    pub fn focus_reporting_enabled(&self) -> bool {
+        self.ghostty.focus_reporting_enabled()
+    }
+
+    pub fn mouse_reporting_enabled(&self) -> bool {
+        self.ghostty.mouse_reporting_enabled()
+    }
+
+    pub fn sgr_pixel_mouse_enabled(&self) -> bool {
+        self.ghostty.sgr_pixel_mouse_enabled()
+    }
+
+    pub fn plain_page_keys_use_host_scrollback(&self) -> Option<bool> {
+        self.ghostty.plain_page_keys_use_host_scrollback()
     }
 
     pub fn alternate_screen_active(&self) -> bool {
@@ -1657,14 +1685,66 @@ impl GhosttyPaneTerminal {
         core.kitty_keyboard.replay_ansi()
     }
 
+    pub fn keyboard_report_all_requested(&self) -> bool {
+        self.core.lock().is_ok_and(|core| {
+            let protocol = crate::input::KeyboardProtocol::from_kitty_flags(
+                core.terminal.kitty_keyboard_flags().unwrap_or(0) as u16,
+            );
+            protocol.reports_all_keys()
+                || (protocol.reports_event_types()
+                    && core.terminal.modify_other_keys_enabled().unwrap_or(false))
+        })
+    }
+
+    pub fn bracketed_paste_enabled(&self) -> bool {
+        self.mode_enabled(crate::ghostty::MODE_BRACKETED_PASTE)
+    }
+
+    pub fn focus_reporting_enabled(&self) -> bool {
+        self.mode_enabled(crate::ghostty::MODE_FOCUS_EVENT)
+    }
+
+    pub fn mouse_reporting_enabled(&self) -> bool {
+        self.core
+            .lock()
+            .is_ok_and(|core| core.terminal.mouse_tracking_enabled().unwrap_or(false))
+    }
+
+    pub fn sgr_pixel_mouse_enabled(&self) -> bool {
+        self.mode_enabled(crate::ghostty::MODE_MOUSE_SGR_PIXELS)
+    }
+
+    fn mode_enabled(&self, mode: u16) -> bool {
+        self.core
+            .lock()
+            .is_ok_and(|core| core.terminal.mode_get(mode).unwrap_or(false))
+    }
+
+    pub fn plain_page_keys_use_host_scrollback(&self) -> Option<bool> {
+        let core = self.core.lock().ok()?;
+        let alternate_screen =
+            core.terminal.active_screen().ok()? == crate::ghostty::ActiveScreen::Alternate;
+        let mouse_reporting = core.terminal.mouse_tracking_enabled().ok()?;
+        let application_cursor = core
+            .terminal
+            .mode_get(crate::ghostty::MODE_APPLICATION_CURSOR_KEYS)
+            .ok()?;
+        let bracketed_paste = core
+            .terminal
+            .mode_get(crate::ghostty::MODE_BRACKETED_PASTE)
+            .ok()?;
+        Some(!alternate_screen && !mouse_reporting && (!application_cursor || bracketed_paste))
+    }
+
     pub fn alternate_screen_active(&self) -> bool {
         self.core.lock().is_ok_and(|core| {
             core.terminal.active_screen().ok() == Some(crate::ghostty::ActiveScreen::Alternate)
         })
     }
 
-    // This aggregate snapshot performs multiple terminal queries and may format
-    // keyboard state. Pane-scaled callers should add a narrow accessor instead.
+    // This aggregate snapshot performs multiple terminal queries. Pane-scaled
+    // callers should add a narrow accessor instead.
+    #[cfg(any(unix, test))]
     pub fn input_state(&self) -> Option<InputState> {
         let Ok(core) = self.core.lock() else {
             return None;
@@ -1727,14 +1807,7 @@ impl GhosttyPaneTerminal {
             mouse_protocol_mode,
             mouse_protocol_encoding,
             mouse_alternate_scroll,
-            #[cfg(windows)]
-            modify_other_keys: core.kitty_keyboard.modify_other_keys_enabled(),
-            #[cfg(not(windows))]
-            modify_other_keys: core
-                .terminal
-                .keyboard_state_ansi()
-                .ok()
-                .is_some_and(|ansi| !ansi.is_empty()),
+            modify_other_keys: core.terminal.modify_other_keys_enabled().ok()?,
             color_scheme_reporting: core
                 .terminal
                 .mode_get(crate::ghostty::MODE_COLOR_SCHEME_REPORT)

@@ -683,7 +683,9 @@ impl WindowsInputMapper {
             if key.unicode == 0 {
                 self.pending_high_surrogate = None;
             }
-            if modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+            if modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+                && !(0x30..=0x39).contains(&key.virtual_key_code)
+            {
                 if let Some(code) = windows_unicode_control_to_key_code(key.unicode) {
                     self.pending_high_surrogate = None;
                     return Some(crate::protocol::ClientInputEvent::Key {
@@ -1426,12 +1428,13 @@ mod tests {
     }
 
     #[test]
-    fn vti_real_non_letter_control_records_are_preserved() {
+    fn vti_control_records_keep_physical_digit_identity() {
         let cases = [
             (0x20, 0x00, ' '),
+            (0x31, 0x00, '1'),
             (0xdc, 0x1c, '\\'),
             (0xdd, 0x1d, ']'),
-            (0x36, 0x1e, '^'),
+            (0x36, 0x1e, '6'),
             (0xbd, 0x1f, '-'),
         ];
 

@@ -518,6 +518,14 @@ fn release_info_from_preview_manifest(
 }
 
 /// Check the hosted update manifest for the latest release. Returns release info if newer.
+fn first_windows_stable_is_pending(
+    manifest: &UpdateManifest,
+    is_windows: bool,
+    installed_is_preview: bool,
+) -> bool {
+    is_windows && installed_is_preview && !manifest.assets.contains_key("windows-x86_64")
+}
+
 fn check_latest() -> Result<Option<ReleaseInfo>, String> {
     let channel = UpdateChannel::configured();
     if channel == UpdateChannel::Preview {
@@ -525,6 +533,10 @@ fn check_latest() -> Result<Option<ReleaseInfo>, String> {
     }
 
     let manifest = fetch_update_manifest()?;
+    if first_windows_stable_is_pending(&manifest, cfg!(windows), crate::build_info::is_preview()) {
+        tracing::info!("waiting for the first stable Windows release");
+        return Ok(None);
+    }
     let release = release_info_from_manifest(&manifest)?;
     if let Some(release) = &release {
         if let Some(metadata) = manifest.metadata_for_version(&release.version) {
@@ -2065,12 +2077,6 @@ fn homebrew_cellar_keg_root(path: &Path) -> Option<PathBuf> {
 /// Manual self-update command (`herdr update`).
 pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
     let channel = UpdateChannel::configured();
-    #[cfg(windows)]
-    if channel == UpdateChannel::Stable {
-        return Err(
-            "Windows builds are preview-only for now; run `herdr channel set preview`".into(),
-        );
-    }
 
     if is_homebrew_managed_install() {
         if channel == UpdateChannel::Preview {
@@ -3577,6 +3583,35 @@ mod tests {
     }
 
     #[test]
+    fn preview_windows_build_waits_for_first_stable_asset() {
+        let without_windows: UpdateManifest = serde_json::from_str(
+            r#"{"version":"9.9.9","notes":"notes","assets":{},"announcement":null}"#,
+        )
+        .unwrap();
+        assert!(first_windows_stable_is_pending(
+            &without_windows,
+            true,
+            true
+        ));
+        assert!(!first_windows_stable_is_pending(
+            &without_windows,
+            true,
+            false
+        ));
+        assert!(!first_windows_stable_is_pending(
+            &without_windows,
+            false,
+            true
+        ));
+
+        let with_windows: UpdateManifest = serde_json::from_str(
+            r#"{"version":"9.9.9","notes":"notes","assets":{"windows-x86_64":"https://example.com/herdr-windows-x86_64.zip"},"announcement":null}"#,
+        )
+        .unwrap();
+        assert!(!first_windows_stable_is_pending(&with_windows, true, true));
+    }
+
+    #[test]
     fn checked_in_website_manifest_matches_update_schema() {
         #[derive(Deserialize)]
         struct LegacyUpdateManifest {
@@ -3632,6 +3667,15 @@ mod tests {
             );
         }
 
+        if let Some(windows) = manifest.assets.get("windows-x86_64") {
+            assert!(windows.url.ends_with("/herdr-windows-x86_64.zip"));
+            assert_eq!(
+                manifest.sha256.get("windows-x86_64").map(String::len),
+                Some(64),
+                "missing SHA-256 checksum for windows-x86_64"
+            );
+        }
+
         for (version, release) in &manifest.releases {
             let assets = release
                 .get("assets")
@@ -3658,6 +3702,19 @@ mod tests {
                     url.ends_with(&asset_name),
                     "unexpected asset name for {version} {target}: {url}"
                 );
+            }
+            if let Some(windows) = assets.get("windows-x86_64") {
+                let windows: AssetRef = serde_json::from_value(windows.clone())
+                    .unwrap_or_else(|_| panic!("invalid Windows asset for release {version}"));
+                assert!(windows.url.ends_with("/herdr-windows-x86_64.zip"));
+                let checksums = release
+                    .get("sha256")
+                    .and_then(serde_json::Value::as_object)
+                    .unwrap_or_else(|| panic!("missing checksums for release {version}"));
+                assert!(checksums
+                    .get("windows-x86_64")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|value| value.len() == 64));
             }
         }
     }
