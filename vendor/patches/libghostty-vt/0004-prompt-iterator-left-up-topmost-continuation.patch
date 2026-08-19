@@ -1,0 +1,18 @@
+diff --git a/vendor/libghostty-vt/src/terminal/PageList.zig b/vendor/libghostty-vt/src/terminal/PageList.zig
+index 79aa96f1..f5359ffc 100644
+--- a/vendor/libghostty-vt/src/terminal/PageList.zig
++++ b/vendor/libghostty-vt/src/terminal/PageList.zig
+@@ -5492,9 +5492,11 @@ pub const PromptIterator = struct {
+                         }
+                     }
+ 
+-                    // No prior rows, trimmed scrollback probably.
++                    // No prior rows, trimmed scrollback probably. The topmost
++                    // continuation we reached is the best start we have; the
++                    // starting row would skip every continuation above it.
+                     self.current = null;
+-                    return p.left(p.x);
++                    return end_pin.left(end_pin.x);
+                 },
+             }
+         }

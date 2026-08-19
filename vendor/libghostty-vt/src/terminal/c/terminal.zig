@@ -768,6 +768,32 @@ pub fn mode_set(
     return .success;
 }
 
+/// Set whether the shell is assumed to redraw its own prompt after a
+/// resize, matching `Terminal.flags.shell_redraws_prompt`.
+///
+/// When true, a resize clears the existing prompt lines before reflowing
+/// (see `Screen.resize`'s `prompt_redraw` handling) so the shell's own
+/// redraw replaces them instead of stacking a second copy below the
+/// reflowed original. This only takes effect once the shell has marked a
+/// prompt with OSC 133, since the clear is gated on the cursor not being
+/// on command output.
+///
+/// libghostty-vt defaults this to false for embedders that may not have
+/// shell integration installed, whereas real Ghostty runs with it true.
+/// Embedders whose shells do emit OSC 133 should turn it on to get
+/// Ghostty's own resize behavior.
+///
+/// Only the boolean states are exposed here; the `last` variant (Bash,
+/// which redraws only the final prompt line) is reachable through
+/// OSC 133;A;redraw=last.
+pub fn set_shell_redraws_prompt(
+    terminal_: Terminal,
+    value: bool,
+) callconv(lib.calling_conv) void {
+    const t: *ZigTerminal = (terminal_ orelse return).terminal;
+    t.flags.shell_redraws_prompt = if (value) .true else .false;
+}
+
 /// C: GhosttyKittyGraphics
 pub const KittyGraphics = kitty_gfx_c.KittyGraphics;
 

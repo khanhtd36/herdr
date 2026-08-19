@@ -1,0 +1,125 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Khanh Truong <khanhtd36@gmail.com>
+Date: Tue, 18 Aug 2026 20:45:00 +0700
+Subject: [PATCH] vendor(libghostty-vt): add shell_redraws_prompt C API setter
+
+Export ghostty_terminal_set_shell_redraws_prompt(): sets
+Terminal.flags.shell_redraws_prompt, which Terminal.resize() passes to
+Screen.resize() as prompt_redraw. When enabled, a resize clears the
+existing prompt lines before reflowing, so a shell that redraws its
+prompt on SIGWINCH replaces them instead of stacking a second copy
+below the reflowed original.
+
+Real Ghostty runs with this flag true (its Terminal.zig default), but
+the libghostty-vt C API forces it to false on terminal_new for
+embedders that may not have shell integration installed. Embedders
+whose shells do emit OSC 133 have no way to opt back in, since the
+flag is otherwise only reachable from inside the VT byte stream via
+OSC 133;A;redraw=. This adds that setter; the clear stays gated inside
+the core on the cursor not being on command output, so shells without
+OSC 133 are unaffected either way.
+
+Only the boolean states are exposed. The `last` variant (Bash, which
+redraws only the final prompt line) remains reachable through
+OSC 133;A;redraw=last.
+---
+diff --git a/vendor/libghostty-vt/include/ghostty/vt/terminal.h b/vendor/libghostty-vt/include/ghostty/vt/terminal.h
+diff --git a/vendor/libghostty-vt/include/ghostty/vt/terminal.h b/vendor/libghostty-vt/include/ghostty/vt/terminal.h
+index 5676a4e8..019ae9cb 100644
+--- a/vendor/libghostty-vt/include/ghostty/vt/terminal.h
++++ b/vendor/libghostty-vt/include/ghostty/vt/terminal.h
+@@ -1295,6 +1295,33 @@ GHOSTTY_API GhosttyResult ghostty_terminal_resize(GhosttyTerminal terminal,
+                                       uint32_t cell_width_px,
+                                       uint32_t cell_height_px);
+ 
++/**
++ * Set whether the shell is assumed to redraw its own prompt after a resize.
++ *
++ * When enabled, a resize clears the existing prompt lines before reflowing,
++ * so the shell's own redraw replaces them instead of stacking a second copy
++ * below the reflowed original. This only takes effect once the shell has
++ * marked a prompt with OSC 133, since the clear is gated on the cursor not
++ * being on command output.
++ *
++ * libghostty-vt defaults this to false for embedders that may not have shell
++ * integration installed, whereas real Ghostty runs with it enabled. Embedders
++ * whose shells do emit OSC 133 should turn it on to get Ghostty's own resize
++ * behavior.
++ *
++ * Only the boolean states are exposed here; the "last" variant (Bash, which
++ * redraws only the final prompt line) is reachable through
++ * OSC 133;A;redraw=last.
++ *
++ * @param terminal The terminal handle (may be NULL, in which case this is a no-op)
++ * @param value Whether the shell redraws its prompt after a resize
++ *
++ * @ingroup terminal
++ */
++GHOSTTY_API void ghostty_terminal_set_shell_redraws_prompt(
++    GhosttyTerminal terminal,
++    bool value);
++
+ /**
+  * Set an option on the terminal.
+  *
+diff --git a/vendor/libghostty-vt/src/lib_vt.zig b/vendor/libghostty-vt/src/lib_vt.zig
+index 469fa600..43bb2293 100644
+--- a/vendor/libghostty-vt/src/lib_vt.zig
++++ b/vendor/libghostty-vt/src/lib_vt.zig
+@@ -266,6 +266,7 @@ comptime {
+         @export(&c.terminal_compress, .{ .name = "ghostty_terminal_compress" });
+         @export(&c.terminal_mode_get, .{ .name = "ghostty_terminal_mode_get" });
+         @export(&c.terminal_mode_set, .{ .name = "ghostty_terminal_mode_set" });
++        @export(&c.terminal_set_shell_redraws_prompt, .{ .name = "ghostty_terminal_set_shell_redraws_prompt" });
+         @export(&c.terminal_get, .{ .name = "ghostty_terminal_get" });
+         @export(&c.terminal_get_multi, .{ .name = "ghostty_terminal_get_multi" });
+         @export(&c.terminal_select_word, .{ .name = "ghostty_terminal_select_word" });
+diff --git a/vendor/libghostty-vt/src/terminal/c/main.zig b/vendor/libghostty-vt/src/terminal/c/main.zig
+index f9401b0d..8a759d42 100644
+--- a/vendor/libghostty-vt/src/terminal/c/main.zig
++++ b/vendor/libghostty-vt/src/terminal/c/main.zig
+@@ -188,6 +188,7 @@ pub const terminal_compression_activity = terminal.compression_activity;
+ pub const terminal_compress = terminal.compress;
+ pub const terminal_mode_get = terminal.mode_get;
+ pub const terminal_mode_set = terminal.mode_set;
++pub const terminal_set_shell_redraws_prompt = terminal.set_shell_redraws_prompt;
+ pub const terminal_get = terminal.get;
+ pub const terminal_get_multi = terminal.get_multi;
+ pub const terminal_select_word = selection.word;
+diff --git a/vendor/libghostty-vt/src/terminal/c/terminal.zig b/vendor/libghostty-vt/src/terminal/c/terminal.zig
+index 411642a4..49acbae9 100644
+--- a/vendor/libghostty-vt/src/terminal/c/terminal.zig
++++ b/vendor/libghostty-vt/src/terminal/c/terminal.zig
+@@ -768,6 +768,32 @@ pub fn mode_set(
+     return .success;
+ }
+ 
++/// Set whether the shell is assumed to redraw its own prompt after a
++/// resize, matching `Terminal.flags.shell_redraws_prompt`.
++///
++/// When true, a resize clears the existing prompt lines before reflowing
++/// (see `Screen.resize`'s `prompt_redraw` handling) so the shell's own
++/// redraw replaces them instead of stacking a second copy below the
++/// reflowed original. This only takes effect once the shell has marked a
++/// prompt with OSC 133, since the clear is gated on the cursor not being
++/// on command output.
++///
++/// libghostty-vt defaults this to false for embedders that may not have
++/// shell integration installed, whereas real Ghostty runs with it true.
++/// Embedders whose shells do emit OSC 133 should turn it on to get
++/// Ghostty's own resize behavior.
++///
++/// Only the boolean states are exposed here; the `last` variant (Bash,
++/// which redraws only the final prompt line) is reachable through
++/// OSC 133;A;redraw=last.
++pub fn set_shell_redraws_prompt(
++    terminal_: Terminal,
++    value: bool,
++) callconv(lib.calling_conv) void {
++    const t: *ZigTerminal = (terminal_ orelse return).terminal;
++    t.flags.shell_redraws_prompt = if (value) .true else .false;
++}
++
+ /// C: GhosttyKittyGraphics
+ pub const KittyGraphics = kitty_gfx_c.KittyGraphics;
+ 

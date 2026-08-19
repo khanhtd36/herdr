@@ -815,6 +815,16 @@ impl Terminal {
             kitty_fingerprints: Mutex::new(HashMap::new()),
             kitty_empty_generation: Cell::new(None),
         };
+        // Match real Ghostty rather than the libghostty-vt embedder default:
+        // clear the old prompt lines on resize so the shell's own redraw
+        // replaces them instead of stacking a copy below the reflowed
+        // original. Gated inside the core on the shell having marked a prompt
+        // with OSC 133, so shells without integration are unaffected.
+        // SAFETY: terminal.raw is a live terminal handle.
+        unsafe {
+            ffi::ghostty_terminal_set_shell_redraws_prompt(terminal.raw, true);
+        }
+
         let userdata = (&mut *terminal.callback_state as *mut TerminalCallbackState).cast();
         let glyph_protocol = false;
         unsafe {
