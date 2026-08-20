@@ -627,6 +627,7 @@ fn main() -> io::Result<()> {
     }
 
     if args.iter().any(|a| a == "--help" || a == "-h") {
+        platform::begin_cli_output();
         println!("herdr — terminal workspace manager for AI coding agents");
         println!();
         println!("Usage: herdr [options]");
@@ -742,16 +743,19 @@ fn main() -> io::Result<()> {
     }
 
     if args.iter().any(|a| a == "--version" || a == "-V") {
+        platform::begin_cli_output();
         println!("herdr {}", crate::build_info::version());
         return Ok(());
     }
 
     if args.iter().any(|a| a == "--default-config") {
+        platform::begin_cli_output();
         print!("{DEFAULT_CONFIG}");
         return Ok(());
     }
 
     if args.iter().any(|a| a == "--skill") {
+        platform::begin_cli_output();
         print!("{SKILL}");
         return Ok(());
     }

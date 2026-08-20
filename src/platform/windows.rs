@@ -15,6 +15,12 @@ use std::{
 
 mod clipboard_image;
 
+pub(crate) fn set_default_plugin_pane_pwd(
+    _env: &mut Vec<(String, String)>,
+    _cwd: &std::path::Path,
+) {
+}
+
 use windows_sys::{
     Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation},
     Win32::{
