@@ -421,6 +421,10 @@ impl PaneTerminal {
         self.ghostty.plain_page_keys_use_host_scrollback()
     }
 
+    // Only reachable via `handoff_history_ansi`, which is unix-gated; the
+    // resize-stability caller that used to reach this on every platform was
+    // removed intentionally (see `terminal_inner_rect` in ui/panes.rs).
+    #[cfg_attr(windows, allow(dead_code))]
     pub fn alternate_screen_active(&self) -> bool {
         self.ghostty.alternate_screen_active()
     }
@@ -1715,6 +1719,10 @@ impl GhosttyPaneTerminal {
         Some(!alternate_screen && !mouse_reporting && (!application_cursor || bracketed_paste))
     }
 
+    // Only reachable via `handoff_history_ansi`, which is unix-gated; the
+    // resize-stability caller that used to reach this on every platform was
+    // removed intentionally (see `terminal_inner_rect` in ui/panes.rs).
+    #[cfg_attr(windows, allow(dead_code))]
     pub fn alternate_screen_active(&self) -> bool {
         self.core.lock().is_ok_and(|core| {
             core.terminal.active_screen().ok() == Some(crate::ghostty::ActiveScreen::Alternate)

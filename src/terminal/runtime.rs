@@ -345,6 +345,10 @@ impl TerminalRuntime {
     }
 
     /// Reads only whether the alternate screen is active.
+    // Only reachable via `handoff_history_ansi`, which is unix-gated; the
+    // resize-stability caller that used to reach this on every platform was
+    // removed intentionally (see `terminal_inner_rect` in ui/panes.rs).
+    #[cfg_attr(windows, allow(dead_code))]
     pub fn alternate_screen_active(&self) -> bool {
         self.0.alternate_screen_active()
     }

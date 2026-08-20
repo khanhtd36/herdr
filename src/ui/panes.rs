@@ -33,8 +33,16 @@ fn pane_border_title(label: &str, pane_width: u16, _focused: bool) -> Option<Str
 
 // Full view computation reaches this helper for active and background panes.
 // Keep terminal queries narrow, allocation-free, and short under the core lock.
-fn terminal_inner_rect(rt: &TerminalRuntime, pane_inner: Rect, pane_scrollbars: bool) -> Rect {
-    if !pane_scrollbars || pane_inner.width <= 4 || rt.alternate_screen_active() {
+//
+// The gutter reservation must stay stable across alternate-screen transitions.
+// Toggling it on `alternate_screen_active()` changes the PTY column count by 1
+// every time a full-screen program (vim, less, a git pager, …) starts or exits,
+// which sends the shell a real resize and can wrap an already-drawn prompt row
+// (e.g. dropping the last character of a right-aligned prompt segment onto a
+// second line). Whether the gutter is actually painted is a separate, purely
+// visual decision made in `stable_scrollbar_gutter` via `should_show_scrollbar`.
+fn terminal_inner_rect(_rt: &TerminalRuntime, pane_inner: Rect, pane_scrollbars: bool) -> Rect {
+    if !pane_scrollbars || pane_inner.width <= 4 {
         return pane_inner;
     }
 
