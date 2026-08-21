@@ -1262,6 +1262,7 @@ impl PaneRuntimeIo {
         &self,
         bytes: Bytes,
         terminal: Arc<PaneTerminal>,
+        content_seq: Arc<AtomicU64>,
         poll_interval: std::time::Duration,
         quiet_period: std::time::Duration,
         max_wait: std::time::Duration,
@@ -1270,7 +1271,14 @@ impl PaneRuntimeIo {
             PaneRuntimeIo::Actor(actor) => {
                 let actor = actor.clone();
                 tokio::spawn(async move {
-                    wait_for_shell_settled(&terminal, poll_interval, quiet_period, max_wait).await;
+                    wait_for_shell_settled(
+                        &terminal,
+                        &content_seq,
+                        poll_interval,
+                        quiet_period,
+                        max_wait,
+                    )
+                    .await;
                     if let Err(err) = actor.write_user_input(bytes).await {
                         warn!(error = %err, "failed to send restored foreground command");
                     }
@@ -1280,7 +1288,14 @@ impl PaneRuntimeIo {
             PaneRuntimeIo::TestChannel { sender, .. } => {
                 let sender = sender.clone();
                 tokio::spawn(async move {
-                    wait_for_shell_settled(&terminal, poll_interval, quiet_period, max_wait).await;
+                    wait_for_shell_settled(
+                        &terminal,
+                        &content_seq,
+                        poll_interval,
+                        quiet_period,
+                        max_wait,
+                    )
+                    .await;
                     let _ = sender.send(bytes).await;
                 });
             }
@@ -1289,16 +1304,25 @@ impl PaneRuntimeIo {
 }
 
 /// Polls the terminal's visible text until it stops changing for
-/// `quiet_period`, or `max_wait` elapses, whichever comes first. Used to
+/// `quiet_period` (or `max_wait` elapses), whichever comes first. Used to
 /// detect that a freshly spawned shell has finished starting up (banner,
 /// profile output, prompt drawn) and is ready to read stdin.
+///
+/// A restored pane's terminal can start out with non-empty, unchanging text
+/// from seeded scrollback history, before the new shell process has produced
+/// any output of its own. Settling on that alone would fire immediately and
+/// reintroduce the dropped-input failure this is meant to prevent, so at
+/// least one fresh PTY read (`content_seq` advancing past its starting
+/// value) is required before a settled snapshot counts.
 async fn wait_for_shell_settled(
     terminal: &PaneTerminal,
+    content_seq: &AtomicU64,
     poll_interval: std::time::Duration,
     quiet_period: std::time::Duration,
     max_wait: std::time::Duration,
 ) {
     let deadline = tokio::time::Instant::now() + max_wait;
+    let initial_content_seq = content_seq.load(Ordering::Acquire);
     let mut last_text = terminal.recent_unwrapped_text_snapshot(64).text;
     let mut last_change = tokio::time::Instant::now();
     loop {
@@ -1309,8 +1333,10 @@ async fn wait_for_shell_settled(
             last_text = text;
             last_change = now;
         }
-        let settled =
-            !last_text.trim().is_empty() && now.duration_since(last_change) >= quiet_period;
+        let fresh_output = content_seq.load(Ordering::Acquire) != initial_content_seq;
+        let settled = fresh_output
+            && !last_text.trim().is_empty()
+            && now.duration_since(last_change) >= quiet_period;
         if settled || now >= deadline {
             return;
         }
@@ -3008,6 +3034,7 @@ impl PaneRuntime {
         self.io.send_bytes_when_shell_ready(
             bytes,
             Arc::clone(&self.terminal),
+            Arc::clone(&self.content_seq),
             poll_interval,
             quiet_period,
             max_wait,
@@ -4685,5 +4712,46 @@ mod tests {
                 observed_at: _,
             } if delivered_pane == pane_id
         ));
+    }
+
+    #[tokio::test]
+    async fn send_bytes_when_shell_ready_ignores_stale_seeded_history() {
+        // A restored pane can start out with non-empty, unchanging screen
+        // text from seeded scrollback history, before the new shell process
+        // has produced any output of its own. That must not be mistaken for
+        // "the shell settled" -- otherwise the restored command types before
+        // the shell is actually reading stdin, the exact bug this guards
+        // against.
+        let (runtime, mut rx) = PaneRuntime::test_with_channel_and_scrollback_bytes(
+            80,
+            24,
+            0,
+            b"STALE_HISTORY_MARKER\r\n",
+            4,
+        );
+
+        runtime.send_bytes_when_shell_ready(
+            Bytes::from_static(b"typed\r"),
+            std::time::Duration::from_millis(20),
+            std::time::Duration::from_millis(50),
+            std::time::Duration::from_millis(2000),
+        );
+
+        // Only the stale seeded history is present; several poll cycles
+        // must pass without the write firing.
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        assert!(
+            rx.try_recv().is_err(),
+            "must not settle on unchanged seeded history alone"
+        );
+
+        // The shell now actually produces output.
+        runtime.test_process_pty_bytes(b"$ ");
+
+        let received = tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv())
+            .await
+            .expect("should settle and fire once fresh shell output arrives")
+            .expect("sender still alive");
+        assert_eq!(received, Bytes::from_static(b"typed\r"));
     }
 }
