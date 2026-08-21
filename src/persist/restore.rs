@@ -22,11 +22,21 @@ use super::{
     WorkspaceSnapshot,
 };
 
-/// Delay before typing a restored foreground command into a freshly spawned
-/// shell. The shell/ConPTY needs a moment to attach and start reading stdin;
-/// writing immediately after spawn can silently drop the early bytes.
-const RESTORE_RUNNING_COMMAND_SETTLE_DELAY: std::time::Duration =
-    std::time::Duration::from_millis(500);
+/// Interval between polls of the freshly spawned shell's screen while waiting
+/// for it to settle before typing a restored foreground command into it.
+const RESTORE_RUNNING_COMMAND_POLL_INTERVAL: std::time::Duration =
+    std::time::Duration::from_millis(100);
+
+/// How long the shell's screen must stay unchanged before it's considered
+/// ready to read stdin.
+const RESTORE_RUNNING_COMMAND_QUIET_PERIOD: std::time::Duration =
+    std::time::Duration::from_millis(200);
+
+/// Upper bound on how long to wait for the shell to settle before giving up
+/// and typing the command anyway. A cold shell startup (e.g. a PowerShell
+/// profile loading right after a machine reboot) can take much longer than a
+/// short fixed delay, so this backstops rather than drives normal timing.
+const RESTORE_RUNNING_COMMAND_MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 struct AgentRestoreState<'a> {
     enabled: bool,
@@ -632,9 +642,11 @@ fn restore_tab(
                         // `\r` submits the line on every shell we spawn (cmd.exe under
                         // ConPTY specifically requires it; POSIX shells accept it too).
                         line.push(b'\r');
-                        runtime.send_bytes_after(
+                        runtime.send_bytes_when_shell_ready(
                             bytes::Bytes::from(line),
-                            RESTORE_RUNNING_COMMAND_SETTLE_DELAY,
+                            RESTORE_RUNNING_COMMAND_POLL_INTERVAL,
+                            RESTORE_RUNNING_COMMAND_QUIET_PERIOD,
+                            RESTORE_RUNNING_COMMAND_MAX_WAIT,
                         );
                     }
                 }

@@ -470,6 +470,17 @@ impl TerminalRuntime {
         self.0.send_bytes_after(bytes, delay);
     }
 
+    pub fn send_bytes_when_shell_ready(
+        &self,
+        bytes: Bytes,
+        poll_interval: std::time::Duration,
+        quiet_period: std::time::Duration,
+        max_wait: std::time::Duration,
+    ) {
+        self.0
+            .send_bytes_when_shell_ready(bytes, poll_interval, quiet_period, max_wait);
+    }
+
     pub async fn send_paste(&self, text: String) -> Result<(), mpsc::error::SendError<Bytes>> {
         self.0.send_paste(text).await
     }
