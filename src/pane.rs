@@ -1251,6 +1251,70 @@ impl PaneRuntimeIo {
             }
         }
     }
+
+    /// Like `send_bytes_after`, but waits for the freshly spawned shell to
+    /// actually produce output and settle (rather than a fixed delay) before
+    /// writing. A slow shell startup (e.g. a PowerShell profile loading cold
+    /// after a machine reboot) can easily exceed a fixed delay, which would
+    /// otherwise cause the write to land before the shell is reading stdin
+    /// and get silently dropped.
+    fn send_bytes_when_shell_ready(
+        &self,
+        bytes: Bytes,
+        terminal: Arc<PaneTerminal>,
+        poll_interval: std::time::Duration,
+        quiet_period: std::time::Duration,
+        max_wait: std::time::Duration,
+    ) {
+        match self {
+            PaneRuntimeIo::Actor(actor) => {
+                let actor = actor.clone();
+                tokio::spawn(async move {
+                    wait_for_shell_settled(&terminal, poll_interval, quiet_period, max_wait).await;
+                    if let Err(err) = actor.write_user_input(bytes).await {
+                        warn!(error = %err, "failed to send restored foreground command");
+                    }
+                });
+            }
+            #[cfg(test)]
+            PaneRuntimeIo::TestChannel { sender, .. } => {
+                let sender = sender.clone();
+                tokio::spawn(async move {
+                    wait_for_shell_settled(&terminal, poll_interval, quiet_period, max_wait).await;
+                    let _ = sender.send(bytes).await;
+                });
+            }
+        }
+    }
+}
+
+/// Polls the terminal's visible text until it stops changing for
+/// `quiet_period`, or `max_wait` elapses, whichever comes first. Used to
+/// detect that a freshly spawned shell has finished starting up (banner,
+/// profile output, prompt drawn) and is ready to read stdin.
+async fn wait_for_shell_settled(
+    terminal: &PaneTerminal,
+    poll_interval: std::time::Duration,
+    quiet_period: std::time::Duration,
+    max_wait: std::time::Duration,
+) {
+    let deadline = tokio::time::Instant::now() + max_wait;
+    let mut last_text = terminal.recent_unwrapped_text_snapshot(64).text;
+    let mut last_change = tokio::time::Instant::now();
+    loop {
+        tokio::time::sleep(poll_interval).await;
+        let now = tokio::time::Instant::now();
+        let text = terminal.recent_unwrapped_text_snapshot(64).text;
+        if text != last_text {
+            last_text = text;
+            last_change = now;
+        }
+        let settled =
+            !last_text.trim().is_empty() && now.duration_since(last_change) >= quiet_period;
+        if settled || now >= deadline {
+            return;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2932,6 +2996,22 @@ impl PaneRuntime {
 
     pub fn send_bytes_after(&self, bytes: Bytes, delay: std::time::Duration) {
         self.io.send_bytes_after(bytes, delay);
+    }
+
+    pub fn send_bytes_when_shell_ready(
+        &self,
+        bytes: Bytes,
+        poll_interval: std::time::Duration,
+        quiet_period: std::time::Duration,
+        max_wait: std::time::Duration,
+    ) {
+        self.io.send_bytes_when_shell_ready(
+            bytes,
+            Arc::clone(&self.terminal),
+            poll_interval,
+            quiet_period,
+            max_wait,
+        );
     }
 
     pub async fn send_paste(&self, text: String) -> Result<(), mpsc::error::SendError<Bytes>> {
