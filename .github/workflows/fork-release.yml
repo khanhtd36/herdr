@@ -174,6 +174,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
     outputs:
       version: ${{ steps.version.outputs.version }}
       windows_asset_url: ${{ steps.urls.outputs.windows_asset_url }}
@@ -272,6 +273,15 @@ jobs:
             git commit -m "chore: update latest.json for fork-v${VERSION}"
             git push origin HEAD:master
           fi
+
+      # A push made with the default GITHUB_TOKEN does not trigger other
+      # workflows (GitHub's loop-prevention rule), so pages-deploy.yml would
+      # never redeploy website/latest.json after the commit above. Trigger it
+      # explicitly via workflow_dispatch instead.
+      - name: Trigger Pages deploy for the updated manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages-deploy.yml --repo "${GITHUB_REPOSITORY}" --ref master
 
   winget:
     needs: release
