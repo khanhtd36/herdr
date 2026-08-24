@@ -450,7 +450,13 @@ fn direct_attach_initial_mouse_capture_follows_config() {
         "mouse capture disabled must not enable host mouse reporting; output: {:?}",
         read_output(&output)
     );
+    assert!(
+        read_output(&output).contains("\x1b[?2004h"),
+        "direct attach must enable host bracketed paste; output: {:?}",
+        read_output(&output)
+    );
 
+    let restore_watermark = output_len(&output);
     attach
         ._master
         .as_ref()
@@ -459,11 +465,10 @@ fn direct_attach_initial_mouse_capture_follows_config() {
         .expect("direct attach PTY writer")
         .write_all(b"\x02q")
         .expect("detach direct attach client");
+    let restore_output = drain_until_client_exits(&mut attach, &output, restore_watermark);
     assert!(
-        wait_until(Duration::from_secs(5), Duration::from_millis(20), || {
-            attach.child.try_wait().ok().flatten().is_some()
-        }),
-        "direct attach client should detach"
+        restore_output.contains("\x1b[?2004l"),
+        "direct attach must disable host bracketed paste on restore; output: {restore_output:?}"
     );
     drop(attach);
 

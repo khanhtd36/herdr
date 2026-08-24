@@ -411,9 +411,15 @@ fn apply_terminal_attach_input(
     data: Vec<u8>,
 ) -> Result<(), String> {
     runtime.scroll_reset();
-    runtime
-        .try_send_bytes(Bytes::from(data))
-        .map_err(|err| format!("terminal attach input failed: {err}"))
+    if let Some(text) = crate::raw_input::complete_text_bracketed_paste(&data) {
+        runtime
+            .try_send_paste(text.to_owned())
+            .map_err(|err| format!("terminal attach paste failed: {err}"))
+    } else {
+        runtime
+            .try_send_bytes(Bytes::from(data))
+            .map_err(|err| format!("terminal attach input failed: {err}"))
+    }
 }
 
 #[cfg(windows)]
@@ -7229,7 +7235,7 @@ next_tab = ""
         rt.shutdown_timeout(Duration::from_millis(100));
     }
 
-    fn with_terminal_attach_page_key_runtime(
+    fn with_terminal_attach_runtime(
         initial_bytes: &[u8],
         initial_scroll: usize,
         test: impl FnOnce(&crate::terminal::TerminalRuntime, &mut mpsc::Receiver<Bytes>),
@@ -7274,8 +7280,34 @@ next_tab = ""
     }
 
     #[test]
+    fn terminal_attach_paste_uses_plain_text_when_runtime_did_not_enable_brackets() {
+        with_terminal_attach_runtime(b"", 0, |runtime, input_rx| {
+            apply_terminal_attach_input(runtime, b"\x1b[200~line one\nline two\x1b[201~".to_vec())
+                .expect("attach paste");
+
+            assert_eq!(
+                input_rx.try_recv().expect("forwarded paste"),
+                Bytes::from_static(b"line one\nline two")
+            );
+        });
+    }
+
+    #[test]
+    fn terminal_attach_paste_preserves_brackets_when_runtime_enabled_them() {
+        with_terminal_attach_runtime(b"\x1b[?2004h", 0, |runtime, input_rx| {
+            apply_terminal_attach_input(runtime, b"\x1b[200~line one\nline two\x1b[201~".to_vec())
+                .expect("attach paste");
+
+            assert_eq!(
+                input_rx.try_recv().expect("forwarded paste"),
+                Bytes::from_static(b"\x1b[200~line one\nline two\x1b[201~")
+            );
+        });
+    }
+
+    #[test]
     fn terminal_attach_page_key_host_scrolls_plain_terminal() {
-        with_terminal_attach_page_key_runtime(b"", 0, |runtime, input_rx| {
+        with_terminal_attach_runtime(b"", 0, |runtime, input_rx| {
             apply_terminal_attach_page_up(runtime);
 
             assert_eq!(
@@ -7291,7 +7323,7 @@ next_tab = ""
 
     #[test]
     fn terminal_attach_page_key_forwards_when_mouse_reporting() {
-        with_terminal_attach_page_key_runtime(b"\x1b[?1000h", 3, |runtime, input_rx| {
+        with_terminal_attach_runtime(b"\x1b[?1000h", 3, |runtime, input_rx| {
             apply_terminal_attach_page_up(runtime);
 
             assert_eq!(
@@ -7310,7 +7342,7 @@ next_tab = ""
 
     #[test]
     fn terminal_attach_page_key_forwards_when_application_cursor() {
-        with_terminal_attach_page_key_runtime(b"\x1b[?1h", 3, |runtime, input_rx| {
+        with_terminal_attach_runtime(b"\x1b[?1h", 3, |runtime, input_rx| {
             apply_terminal_attach_page_up(runtime);
 
             assert_eq!(
@@ -7329,7 +7361,7 @@ next_tab = ""
 
     #[test]
     fn terminal_attach_page_key_host_scrolls_shell_like_decckm_with_bracketed_paste() {
-        with_terminal_attach_page_key_runtime(b"\x1b[?1h\x1b[?2004h", 0, |runtime, input_rx| {
+        with_terminal_attach_runtime(b"\x1b[?1h\x1b[?2004h", 0, |runtime, input_rx| {
             apply_terminal_attach_page_up(runtime);
 
             assert_eq!(
@@ -7345,7 +7377,7 @@ next_tab = ""
 
     #[test]
     fn terminal_attach_page_key_forwards_in_alternate_screen_without_mouse_reporting() {
-        with_terminal_attach_page_key_runtime(b"\x1b[?1049h", 3, |runtime, input_rx| {
+        with_terminal_attach_runtime(b"\x1b[?1049h", 3, |runtime, input_rx| {
             apply_terminal_attach_page_up(runtime);
 
             assert_eq!(

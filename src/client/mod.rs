@@ -114,6 +114,7 @@ struct AttachEscapeState {
 #[cfg(unix)]
 enum AttachInputAction {
     Forward(Vec<u8>),
+    ForwardAfterPendingPrefix(Vec<u8>),
     Scroll {
         source: AttachScrollSource,
         direction: AttachScrollDirection,
@@ -135,6 +136,14 @@ impl AttachEscapeState {
         mouse_scroll_lines: usize,
     ) -> AttachInputAction {
         const PREFIX: u8 = 0x02; // Ctrl+B
+
+        if crate::raw_input::is_complete_text_bracketed_paste(&data) {
+            return if std::mem::take(&mut self.pending_prefix) {
+                AttachInputAction::ForwardAfterPendingPrefix(data)
+            } else {
+                AttachInputAction::Forward(data)
+            };
+        }
 
         let mut output = Vec::with_capacity(data.len());
         for byte in data {
@@ -384,6 +393,7 @@ fn setup_terminal_with_capabilities(
         } else {
             set_mouse_capture(false, false)?;
         }
+        execute!(io::stdout(), EnableBracketedPaste)?;
     }
 
     #[cfg(windows)]
@@ -1528,6 +1538,13 @@ async fn run_client_loop(
                         state.mouse_scroll_lines,
                     ) {
                         AttachInputAction::Forward(data) => data,
+                        AttachInputAction::ForwardAfterPendingPrefix(data) => {
+                            let prefix = ClientMessage::Input { data: vec![0x02] };
+                            if let Err(e) = write_to_server(&mut write_stream, &prefix) {
+                                return Err(ClientError::ConnectionLost(e));
+                            }
+                            data
+                        }
                         AttachInputAction::Scroll {
                             source,
                             direction,
@@ -3131,6 +3148,38 @@ mod tests {
             AttachInputAction::Forward(bytes) => assert_eq!(bytes, vec![0x02]),
             other => panic!("expected forwarded prefix, got {other:?}"),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn attach_escape_does_not_interpret_bracketed_paste_contents() {
+        let mut escape = AttachEscapeState::default();
+        let paste = b"\x1b[200~one\x02q\ntwo\x1b[201~".to_vec();
+
+        match escape.filter_input(paste.clone(), 24, 3) {
+            AttachInputAction::Forward(bytes) => assert_eq!(bytes, paste),
+            other => panic!("expected opaque paste, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn attach_escape_flushes_pending_prefix_before_bracketed_paste() {
+        let mut escape = AttachEscapeState::default();
+        let paste = b"\x1b[200~one\ntwo\x1b[201~".to_vec();
+        assert!(matches!(
+            escape.filter_input(vec![0x02], 24, 3),
+            AttachInputAction::None
+        ));
+
+        assert!(matches!(
+            escape.filter_input(paste.clone(), 24, 3),
+            AttachInputAction::ForwardAfterPendingPrefix(bytes) if bytes == paste
+        ));
+        assert!(matches!(
+            escape.filter_input(vec![b'q'], 24, 3),
+            AttachInputAction::Forward(bytes) if bytes == b"q"
+        ));
     }
 
     #[cfg(unix)]

@@ -68,10 +68,12 @@ async function preparePublicAssets() {
   for (const file of [
     'install.sh',
     'install.ps1',
+    'install.cmd',
     'agent-guide.md',
     'latest.json',
     'preview.json',
     'robots.txt',
+    'favicon.ico',
     '_headers',
     '_redirects',
   ]) {

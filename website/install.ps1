@@ -216,6 +216,50 @@ function Get-ManifestAsset {
     }
 }
 
+function Invoke-CurlDownload {
+    param(
+        [string]$Uri,
+        [string]$Destination
+    )
+
+    $parsedUri = $null
+    if (-not [System.Uri]::TryCreate($Uri, [System.UriKind]::Absolute, [ref]$parsedUri) -or
+        $parsedUri.Scheme -notin @("http", "https")) {
+        throw "Herdr download URL must use HTTP or HTTPS: $Uri"
+    }
+
+    $curl = Get-Command curl.exe -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -eq $curl) {
+        throw "Herdr installation requires curl.exe, which is included with supported Windows versions."
+    }
+
+    $arguments = @(
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--location",
+        "--connect-timeout", "30",
+        "--speed-limit", "1024",
+        "--speed-time", "30"
+    )
+    if ($parsedUri.Scheme -eq "https") {
+        $arguments += @("--proto", "=https", "--tlsv1.2")
+    }
+    $arguments += @("--output", $Destination, "--", $Uri)
+
+    $curlOutput = & $curl.Source @arguments 2>&1
+    $curlExitCode = $LASTEXITCODE
+    if ($curlExitCode -ne 0) {
+        $detail = ($curlOutput | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+        $message = "Failed to download $Uri (curl exit code $curlExitCode)."
+        if (-not [string]::IsNullOrWhiteSpace($detail)) {
+            $message += " $detail"
+        }
+        throw $message
+    }
+}
+
 function ConvertTo-ManifestObject {
     param([object]$Manifest)
 
@@ -230,6 +274,18 @@ function ConvertTo-ManifestObject {
     }
 
     return $json | ConvertFrom-Json
+}
+
+function Get-RemoteManifest {
+    param([string]$Uri)
+
+    $manifestPath = Join-Path ([System.IO.Path]::GetTempPath()) ("herdr-manifest-" + [System.Guid]::NewGuid().ToString("N") + ".json")
+    try {
+        Invoke-CurlDownload -Uri $Uri -Destination $manifestPath
+        return ConvertTo-ManifestObject -Manifest ([System.IO.File]::ReadAllText($manifestPath))
+    } finally {
+        Remove-Item -LiteralPath $manifestPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Test-FileDigest {
@@ -691,7 +747,7 @@ if ($useLocalPackage) {
     }
 
     Write-Step "Fetching Herdr $Channel manifest"
-    $manifest = ConvertTo-ManifestObject -Manifest (Invoke-RestMethod -Uri $ManifestUrl)
+    $manifest = Get-RemoteManifest -Uri $ManifestUrl
     $manifestChannelProperty = $manifest.PSObject.Properties["channel"]
     if (-not $channelWasExplicit -and $null -ne $manifestChannelProperty -and [string]$manifestChannelProperty.Value -eq "preview") {
         $Channel = "preview"
@@ -710,7 +766,7 @@ if ($useLocalPackage) {
         $Channel = "preview"
         $ManifestUrl = $ManifestUrl.Substring(0, $ManifestUrl.Length - "latest.json".Length) + "preview.json"
         Write-Step "Fetching Herdr preview manifest"
-        $manifest = ConvertTo-ManifestObject -Manifest (Invoke-RestMethod -Uri $ManifestUrl)
+        $manifest = Get-RemoteManifest -Uri $ManifestUrl
     }
     $asset = Get-ManifestAsset -Manifest $manifest -Target $target
     if (-not [string]::IsNullOrWhiteSpace($ExpectedBuildId) -and [string]$manifest.build_id -ne $ExpectedBuildId) {
@@ -739,7 +795,7 @@ try {
             $stagingDir = Join-Path $releasesDir ".staging.$releaseName.$PID"
             if (-not $useLocalPackage) {
                 Write-Step "Downloading Herdr"
-                Invoke-WebRequest -Uri $asset.Url -OutFile $downloadPath
+                Invoke-CurlDownload -Uri $asset.Url -Destination $downloadPath
             }
             Test-FileDigest -Path $downloadPath -ExpectedDigest $asset.Sha256
 

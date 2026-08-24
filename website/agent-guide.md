@@ -32,10 +32,17 @@ curl -fsSL https://herdr.dev/install.sh | sh
 herdr
 ```
 
-Windows:
+Windows PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -c "irm https://herdr.dev/install.ps1 | iex"
+herdr
+```
+
+If endpoint security blocks that fileless PowerShell command, use Command Prompt:
+
+```cmd
+curl.exe -fsSLo install.cmd https://herdr.dev/install.cmd && install.cmd && del install.cmd
 herdr
 ```
 
