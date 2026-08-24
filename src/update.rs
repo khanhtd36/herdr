@@ -277,14 +277,18 @@ impl UpdateManifest {
     }
 
     fn metadata_for_version(&self, version: &Version) -> Option<ManifestReleaseMetadata> {
-        let version = version.to_string();
-        if self.version.trim_start_matches('v') == version {
+        // Compare parsed versions rather than raw strings: a fork's manifest
+        // `version` field may carry a prerelease/build suffix (e.g.
+        // `0.8.2-khanhtd36.2`) that a bare `Version` (major.minor.patch)
+        // never matches by string equality.
+        if Version::parse(self.version.trim_start_matches('v')).as_ref() == Some(version) {
             return Some(ManifestReleaseMetadata {
                 notes: self.notes.clone(),
                 announcement: self.announcement.clone(),
             });
         }
 
+        let version = version.to_string();
         self.releases.get(&version).and_then(|release| {
             let metadata =
                 serde_json::from_value::<ManifestReleaseMetadata>(release.clone()).ok()?;
@@ -3354,6 +3358,20 @@ mod tests {
             manifest.download_url_for("linux", "x86_64").as_deref(),
             Some("https://example.com/herdr-linux-x86_64")
         );
+    }
+
+    #[test]
+    fn metadata_for_version_matches_suffixed_manifest_version() {
+        let json = "{\n\
+            \"version\": \"0.8.2-khanhtd36.2\",\n\
+            \"notes\": \"### Changed\\n- Fork release\",\n\
+            \"assets\": {}\n\
+        }";
+        let manifest: UpdateManifest = serde_json::from_str(json).unwrap();
+        let metadata = manifest
+            .metadata_for_version(&Version::parse("0.8.2").unwrap())
+            .expect("metadata for the manifest's own suffixed version");
+        assert_eq!(metadata.notes_body(), "### Changed\n- Fork release");
     }
 
     #[test]
