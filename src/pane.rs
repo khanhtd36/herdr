@@ -2893,10 +2893,10 @@ impl PaneRuntime {
         self.terminal.plain_page_keys_use_host_scrollback()
     }
 
-    // Only reachable via `handoff_history_ansi`, which is unix-gated; the
-    // resize-stability caller that used to reach this on every platform was
-    // removed intentionally (see `terminal_inner_rect` in ui/panes.rs).
-    #[cfg_attr(windows, allow(dead_code))]
+    // Production code reads alt-screen state via `self.terminal` directly
+    // (e.g. `handoff_history_ansi`); this wrapper only exists for test
+    // assertions (see `pane_clear_screen_in_alt_screen_never_writes_to_pty`).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn alternate_screen_active(&self) -> bool {
         self.terminal.alternate_screen_active()
     }
