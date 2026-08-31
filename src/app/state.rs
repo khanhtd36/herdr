@@ -1467,6 +1467,8 @@ pub struct AppState {
     pub(crate) previous_pane_focus: Option<PaneFocusTarget>,
     pub selected: usize,
     pub mode: Mode,
+    /// Stable workspace identity captured when the close confirmation opens.
+    pub(crate) confirm_close_workspace_id: Option<String>,
     pub should_quit: bool,
     /// In monolithic --no-session mode, detach exits the app because there is no server to detach from.
     pub detach_exits: bool,
@@ -1874,6 +1876,7 @@ impl AppState {
             previous_pane_focus: None,
             selected: 0,
             mode: Mode::Navigate,
+            confirm_close_workspace_id: None,
             should_quit: false,
             detach_exits: false,
             detach_requested: false,
