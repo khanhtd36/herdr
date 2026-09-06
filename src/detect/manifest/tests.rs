@@ -660,6 +660,85 @@ fn osc_explain(
 // --- Claude OSC rules ---
 
 #[test]
+fn claude_idle_prompt_with_background_shell_is_idle() {
+    // Captured from Claude Code 2.1.251 after its foreground turn ended while
+    // a long-lived background shell remained active (issue #3414).
+    let screen = concat!(
+        "✻ Sautéed for 10s · 1 shell still running\n\n",
+        "──────────────────────────────────────────────────────── WINDOWS ─\n",
+        "❯\n",
+        "────────────────────────────────────────────────────────────────\n",
+        "  ⏵⏵ auto mode on · 1 shell · ← for agents                     /rc\n",
+    );
+    let result = osc_explain(Agent::Claude, screen, "", "");
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("live_prompt_box")
+    );
+    assert!(result.visible_idle);
+    assert!(!result.visible_working);
+}
+
+#[test]
+fn claude_background_shell_without_foreground_evidence_is_idle_fallback() {
+    let result = osc_explain(
+        Agent::Claude,
+        "  ⏵⏵ auto mode on · 1 shell · ← for agents\n",
+        "",
+        "",
+    );
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert_eq!(result.matched_rule, None);
+    assert_eq!(
+        result.fallback_reason.as_deref(),
+        Some(DEFAULT_KNOWN_AGENT_IDLE_FALLBACK)
+    );
+    assert!(!result.visible_working);
+}
+
+#[test]
+fn claude_live_turn_with_background_shell_remains_working() {
+    let screen = concat!(
+        "────────────────────────────────────────────────────────────────\n",
+        "❯\n",
+        "────────────────────────────────────────────────────────────────\n",
+        "  ⏵⏵ auto mode on · 1 shell · esc to interrupt\n",
+    );
+    let result = osc_explain(Agent::Claude, screen, "", "");
+
+    assert_eq!(result.state, AgentState::Working);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("live_turn_working")
+    );
+    assert!(result.visible_working);
+}
+
+#[test]
+fn claude_blocker_with_background_shell_remains_blocked() {
+    let screen = concat!(
+        "do you want to proceed?\n",
+        "bash command: rm -rf /tmp/test\n",
+        "❯ 1. Yes\n",
+        "  2. No\n\n",
+        "Esc to cancel · Tab to amend · ctrl+e to explain\n",
+        "  ⏵⏵ auto mode on · 1 shell · ← for agents\n",
+    );
+    let result = osc_explain(Agent::Claude, screen, "", "");
+
+    assert_eq!(result.state, AgentState::Blocked);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("bash_permission_prompt")
+    );
+    assert!(result.visible_blocker);
+    assert!(!result.visible_working);
+}
+
+#[test]
 fn claude_osc_title_braille_prefix_is_working() {
     // "⠂" is U+2802, in the braille block U+2800-U+28FF
     let result = osc_explain(Agent::Claude, "", "⠂ project", "");
@@ -850,6 +929,47 @@ fn codex_trust_directory_requires_live_top_region() {
         Some("trust_directory")
     );
     assert!(!result.visible_blocker);
+}
+
+#[test]
+fn codex_startup_update_requires_complete_live_chooser() {
+    let chooser = "Update available! 0.153.0 -> 9.8.7\n\
+        Run bun add -g @openai/codex to update.\n\n\
+        › 1. Update now\n\
+          2. Skip until next version\n\n\
+        Press enter to continue   \n";
+    let wrapped = "✨ Update available! 0.153.0\n\n\
+        Release notes: https://example\n\n\
+        › 1. Update now (runs `npm\n\
+             install -g\n\
+             @openai/codex`)\n\
+          2. Skip\n\
+          3. Skip until next\n\
+             version\n\n\
+        Press enter to continue\n";
+
+    for screen in [chooser, wrapped] {
+        let result = osc_explain(Agent::Codex, screen, "project", "");
+        assert_eq!(result.state, AgentState::Blocked);
+        assert_eq!(
+            result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+            Some("startup_update")
+        );
+        assert!(result.visible_blocker);
+    }
+
+    for screen in [
+        chooser.replace("Update now", "Install"),
+        format!("{wrapped}\n› Ask Codex to do anything\n"),
+    ] {
+        let result = osc_explain(Agent::Codex, &screen, "project", "");
+        assert_eq!(result.state, AgentState::Idle);
+        assert_ne!(
+            result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+            Some("startup_update")
+        );
+        assert!(!result.visible_blocker);
+    }
 }
 
 #[test]

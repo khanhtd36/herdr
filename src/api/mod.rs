@@ -7,8 +7,8 @@ mod subscriptions;
 mod wait;
 
 pub use event_hub::EventHub;
-pub(crate) use server::start_server_with_stop_control;
-pub use server::{start_server_with_capabilities, ServerHandle};
+pub use server::ServerHandle;
+pub(crate) use server::{api_method_name, start_server_with_stop_control};
 pub use status::{read_runtime_status_at, RuntimeStatus};
 
 use std::path::PathBuf;
@@ -25,6 +25,9 @@ pub(crate) fn request_changes_ui(request: &Request) -> bool {
         Method::ServerReloadConfig(_)
             | Method::ServerReloadAgentManifests(_)
             | Method::NotificationShow(_)
+            | Method::ProductAnnouncementDismiss(_)
+            | Method::ReleaseNotesDismiss(_)
+            | Method::CommandInvoke(_)
             | Method::WorkspaceCreate(_)
             | Method::WorkspaceFocus(_)
             | Method::WorkspaceRename(_)
@@ -51,10 +54,13 @@ pub(crate) fn request_changes_ui(request: &Request) -> bool {
             | Method::AgentSendKeys(_)
             | Method::PaneSplit(_)
             | Method::PaneSwap(_)
+            | Method::PaneSwapMarked(_)
             | Method::PaneMove(_)
             | Method::PaneZoom(_)
             | Method::PaneFocusDirection(_)
             | Method::PaneResize(_)
+            | Method::PaneScroll(_)
+            | Method::PaneEditScrollback(_)
             | Method::PaneFocus(_)
             | Method::PaneInputSet(_)
             | Method::PaneRename(_)

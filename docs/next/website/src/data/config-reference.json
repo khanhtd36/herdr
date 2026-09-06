@@ -13,6 +13,18 @@
       ]
     },
     {
+      "id": "detect",
+      "title": "Agent Detection",
+      "keys": [
+        {
+          "key": "detect.enabled",
+          "type": "boolean",
+          "default": "true",
+          "description": "Enable AI-agent detection (foreground process probing and screen-content detection). Set false to fully disable detection, which also forces off dependent settings such as agent-panel sorting, resume-agents-on-restore, and remote manifest checks."
+        }
+      ]
+    },
+    {
       "id": "server",
       "title": "Server",
       "keys": [
@@ -434,6 +446,12 @@
             "current",
             "path"
           ]
+        },
+        {
+          "key": "terminal.kitty_graphics",
+          "type": "boolean",
+          "default": "true",
+          "description": "Render pane images in Kitty graphics-compatible outer terminals. Set false to disable graphics rendering and the pane graphics API. Restart the server or reattach the client after changing it. In remote sessions, server configuration controls parsing and API availability while local client configuration controls outer-terminal output."
         }
       ]
     },
@@ -592,7 +610,7 @@
           "key": "keys.detach",
           "type": "keybinding",
           "default": "\"prefix+q\"",
-          "description": "Detach from server/client mode, or exit --no-session mode."
+          "description": "Detach the current client from its Herdr server."
         },
         {
           "key": "keys.reload_config",
@@ -761,6 +779,24 @@
           "type": "keybinding",
           "default": "\"prefix+shift+l\"",
           "description": "Swap the focused pane with the pane to the right."
+        },
+        {
+          "key": "keys.mark_pane",
+          "type": "keybinding",
+          "default": "\"prefix+m\"",
+          "description": "Mark the focused pane for a swap (mirrors tmux's select-pane -m). Always sets the mark; not a toggle."
+        },
+        {
+          "key": "keys.unmark_pane",
+          "type": "keybinding",
+          "default": "\"prefix+shift+m\"",
+          "description": "Clear any armed pane mark."
+        },
+        {
+          "key": "keys.swap_marked_pane",
+          "type": "keybinding",
+          "default": "\"prefix+shift+s\"",
+          "description": "Swap the marked pane with the focused pane, in the same tab or another tab in this workspace."
         },
         {
           "key": "keys.cycle_pane_next",
@@ -1488,8 +1524,8 @@
         {
           "key": "experimental.kitty_graphics",
           "type": "boolean",
-          "default": "false",
-          "description": "Experimental local Kitty graphics rendering for attached clients."
+          "default": "unset",
+          "description": "Deprecated compatibility key for terminal.kitty_graphics. Existing true and false values remain supported; terminal.kitty_graphics takes precedence when both are set."
         },
         {
           "key": "experimental.pane_history",

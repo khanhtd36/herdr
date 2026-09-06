@@ -12,7 +12,7 @@ enum SessionSaveJob {
 
 impl App {
     pub(super) fn schedule_session_save(&mut self) {
-        if !self.no_session {
+        if self.policy.persist_session {
             self.session_save_deadline = Some(Instant::now() + SESSION_SAVE_DEBOUNCE);
         }
     }
@@ -46,9 +46,6 @@ impl App {
                 &self.terminal_runtimes,
                 self.state.active,
                 self.state.selected,
-                self.state.sidebar_width,
-                self.state.sidebar_section_split,
-                self.state.collapsed_space_keys.clone(),
                 self.restore_running_commands,
             );
             let history = self.persist_pane_history.then(|| {
@@ -59,7 +56,7 @@ impl App {
     }
 
     pub(crate) fn start_background_session_save(&mut self) {
-        if self.no_session {
+        if !self.policy.persist_session {
             self.session_save_deadline = None;
             return;
         }
@@ -89,7 +86,7 @@ impl App {
             let _ = thread.join();
         }
 
-        if self.no_session {
+        if !self.policy.persist_session {
             self.session_save_deadline = None;
             return;
         }

@@ -39,6 +39,24 @@ pub(crate) fn apply_pane_runtime_marker(command: &mut portable_pty::CommandBuild
     apply_pane_runtime_marker_platform(command);
 }
 
+pub(crate) fn prepare_paste_text_for_pty(text: String) -> String {
+    prepare_paste_text_for_pty_platform(text)
+}
+
+pub(crate) fn plugin_runtime_path(path: &std::path::Path) -> std::path::PathBuf {
+    plugin_runtime_path_platform(path)
+}
+
+#[cfg(not(windows))]
+fn plugin_runtime_path_platform(path: &std::path::Path) -> std::path::PathBuf {
+    path.to_path_buf()
+}
+
+#[cfg(not(windows))]
+fn prepare_paste_text_for_pty_platform(text: String) -> String {
+    text
+}
+
 #[cfg(not(windows))]
 pub(crate) fn terminal_title_for_presentation(title: &str) -> &str {
     title
@@ -67,6 +85,23 @@ pub(crate) const fn capabilities() -> PlatformCapabilities {
         direct_terminal_attach: cfg!(unix),
         preserve_legacy_doubled_escape_input: cfg!(target_os = "macos"),
     }
+}
+
+pub(crate) fn terminal_grid_size() -> std::io::Result<(u16, u16)> {
+    #[cfg(unix)]
+    let (cols, rows) = unix_common::read_terminal_grid_size()?;
+    #[cfg(windows)]
+    let (cols, rows) = windows::read_terminal_grid_size()?;
+    #[cfg(not(any(unix, windows)))]
+    let (cols, rows) = fallback::read_terminal_grid_size()?;
+
+    if cols == 0 || rows == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "terminal reported a zero-sized grid",
+        ));
+    }
+    Ok((cols, rows))
 }
 
 #[cfg(not(windows))]
@@ -201,6 +236,9 @@ mod unix_common;
 #[cfg(unix)]
 pub(crate) use unix_common::{begin_cli_output, end_cli_output};
 
+mod client_state;
+pub(crate) use client_state::{create_private_state_file, replace_file, sync_parent_directory};
+
 #[cfg(not(unix))]
 pub(crate) fn begin_cli_output() {}
 
@@ -280,6 +318,7 @@ pub(crate) fn interactive_unix_shell_command(
 
 pub(crate) fn quote_powershell_arg(value: &str) -> String {
     if !value.is_empty()
+        && !value.starts_with('-')
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric()
                 || matches!(byte, b'_' | b'-' | b'.' | b'/' | b':' | b'+' | b'=')
