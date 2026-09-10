@@ -5,10 +5,10 @@ on:
     branches:
       - master
     paths:
-      - "website/install.sh"
-      - "website/install.ps1"
-      - "website/latest.json"
-      - "website/CNAME"
+      - "distribution/install.sh"
+      - "distribution/install.ps1"
+      - "distribution/latest.json"
+      - "distribution/CNAME"
   workflow_dispatch: {}
 
 permissions:
@@ -36,10 +36,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p _site
-          cp website/install.sh _site/install.sh
-          cp website/install.ps1 _site/install.ps1
-          cp website/latest.json _site/latest.json
-          cp website/CNAME _site/CNAME
+          cp distribution/install.sh _site/install.sh
+          cp distribution/install.ps1 _site/install.ps1
+          cp distribution/latest.json _site/latest.json
+          cp distribution/CNAME _site/CNAME
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3

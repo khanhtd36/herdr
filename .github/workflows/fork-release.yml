@@ -254,7 +254,7 @@ jobs:
                   }
               },
           }
-          with open("website/latest.json", "w", encoding="utf-8") as f:
+          with open("distribution/latest.json", "w", encoding="utf-8") as f:
               json.dump(manifest, f, indent=2)
               f.write("\n")
           PYEOF
@@ -266,9 +266,9 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add website/latest.json
+          git add distribution/latest.json
           if git diff --cached --quiet; then
-            echo "website/latest.json unchanged, nothing to commit"
+            echo "distribution/latest.json unchanged, nothing to commit"
           else
             git commit -m "chore: update latest.json for fork-v${VERSION}"
             git push origin HEAD:master
@@ -276,7 +276,7 @@ jobs:
 
       # A push made with the default GITHUB_TOKEN does not trigger other
       # workflows (GitHub's loop-prevention rule), so pages-deploy.yml would
-      # never redeploy website/latest.json after the commit above. Trigger it
+      # never redeploy distribution/latest.json after the commit above. Trigger it
       # explicitly via workflow_dispatch instead.
       - name: Trigger Pages deploy for the updated manifest
         env:
