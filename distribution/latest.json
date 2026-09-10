@@ -1,30 +1,30 @@
 {
-  "version": "0.8.2-khanhtd36.3",
+  "version": "0.8.2-khanhtd36.4",
   "protocol": 20,
-  "notes": "See https://github.com/khanhtd36/herdr/releases/tag/fork-v0.8.2-khanhtd36.3 for release notes.",
+  "notes": "See https://github.com/khanhtd36/herdr/releases/tag/fork-v0.8.2-khanhtd36.4 for release notes.",
   "assets": {
-    "linux-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.8.2-khanhtd36.3/herdr-linux-x86_64",
-    "macos-aarch64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.8.2-khanhtd36.3/herdr-macos-aarch64",
-    "windows-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.8.2-khanhtd36.3/herdr-windows-x86_64.exe"
+    "linux-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.8.2-khanhtd36.4/herdr-linux-x86_64",
+    "macos-aarch64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.8.2-khanhtd36.4/herdr-macos-aarch64",
+    "windows-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.8.2-khanhtd36.4/herdr-windows-x86_64.exe"
   },
   "sha256": {
-    "linux-x86_64": "dc47e0adb1e196f52232c087c352ff26fb47852156b500875fba29a95f7e8565",
-    "macos-aarch64": "a754c7a4541a0f2f2b225743e75185522d1773a7e7d7c464d90fff2f3d137d32",
-    "windows-x86_64": "cd2ce29cf3d635a95b7683cb3fcec74756153a6a943b4a4083633ef0c924bae5"
+    "linux-x86_64": "5f290a553fd4dcc5b6f0bec9dfeb5dd10ef86dd17d364ee97dfb144aac48dee4",
+    "macos-aarch64": "30b34c36a07761255f6e3ce741d9010691fddd58aa5a66eaa668602f34742cfb",
+    "windows-x86_64": "e70a36fdbf4fb48c1359d6e9296120e403462ef4845c3261316a54b21d8282ef"
   },
   "releases": {
-    "0.8.2-khanhtd36.3": {
-      "notes": "See https://github.com/khanhtd36/herdr/releases/tag/fork-v0.8.2-khanhtd36.3 for release notes.",
+    "0.8.2-khanhtd36.4": {
+      "notes": "See https://github.com/khanhtd36/herdr/releases/tag/fork-v0.8.2-khanhtd36.4 for release notes.",
       "protocol": 20,
       "assets": {
-        "linux-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.8.2-khanhtd36.3/herdr-linux-x86_64",
-        "macos-aarch64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.8.2-khanhtd36.3/herdr-macos-aarch64",
-        "windows-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.8.2-khanhtd36.3/herdr-windows-x86_64.exe"
+        "linux-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.8.2-khanhtd36.4/herdr-linux-x86_64",
+        "macos-aarch64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.8.2-khanhtd36.4/herdr-macos-aarch64",
+        "windows-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.8.2-khanhtd36.4/herdr-windows-x86_64.exe"
       },
       "sha256": {
-        "linux-x86_64": "dc47e0adb1e196f52232c087c352ff26fb47852156b500875fba29a95f7e8565",
-        "macos-aarch64": "a754c7a4541a0f2f2b225743e75185522d1773a7e7d7c464d90fff2f3d137d32",
-        "windows-x86_64": "cd2ce29cf3d635a95b7683cb3fcec74756153a6a943b4a4083633ef0c924bae5"
+        "linux-x86_64": "5f290a553fd4dcc5b6f0bec9dfeb5dd10ef86dd17d364ee97dfb144aac48dee4",
+        "macos-aarch64": "30b34c36a07761255f6e3ce741d9010691fddd58aa5a66eaa668602f34742cfb",
+        "windows-x86_64": "e70a36fdbf4fb48c1359d6e9296120e403462ef4845c3261316a54b21d8282ef"
       }
     }
   }
