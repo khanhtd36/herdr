@@ -579,6 +579,33 @@ fn double_click_drag_invalidates_cached_boundaries_outside_selected_cells() {
 }
 
 #[test]
+fn reconnect_word_selection_tracks_content_changes() {
+    for content_changed in [false, true] {
+        let mut state = word_drag_state(true);
+        let initial = start_word_drag(&mut state);
+        word_row_reply(&mut state, &initial, "alpha bravo charlie");
+        let mut next_surface = state.pane_surface.as_ref().unwrap().clone();
+        if content_changed {
+            next_surface.panes[0].content_revision += 2;
+            next_surface.frame.cells[14].symbol = " ".into();
+        }
+        let endpoint_id = state.active_endpoint_id.clone();
+        let snapshot = state.snapshot.as_ref().unwrap().clone();
+        state.mark_endpoint_disconnected(&endpoint_id);
+        state.cache_endpoint_snapshot_inactive_for_generation(&endpoint_id, 1, snapshot);
+        state.set_endpoint_status(
+            &endpoint_id,
+            crate::client::endpoint::ClientEndpointStatus::Online,
+        );
+        assert!(state.activate_endpoint_projection(&endpoint_id));
+        state.set_pane_surface(next_surface);
+
+        assert_eq!(state.selection.is_some(), !content_changed);
+        assert_eq!(state.word_selection_gesture.is_some(), !content_changed);
+    }
+}
+
+#[test]
 fn double_click_release_ignores_reply_after_focus_or_content_changes() {
     for focus_changed in [false, true] {
         let mut state = word_drag_state(true);
@@ -665,7 +692,7 @@ fn double_click_drag_autoscroll_keeps_absolute_word_anchor() {
 }
 
 #[test]
-fn pane_content_updates_preserve_active_selection_only_when_selected_cells_stay_stable() {
+fn pane_content_updates_preserve_live_ranges_until_geometry_or_screen_changes() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));
     let surface_at = |surface_revision, content_revision, alternate_screen_active| {
@@ -713,17 +740,42 @@ fn pane_content_updates_preserve_active_selection_only_when_selected_cells_stay_
     assert!(selection.is_visible());
     assert_eq!(selection.ordered_cells(), ((12, 0), (12, 1)));
 
-    state.selection = Some(crate::selection::Selection::absolute_anchor(
-        "pane_1".to_owned(),
-        (12, 0),
-    ));
     let mut replaced_surface = surface_at(3, 4, true);
     replaced_surface.frame.cells[4].symbol = "X".into();
     state.set_pane_surface(replaced_surface);
-    assert!(state.selection.is_none());
+    assert_eq!(
+        state.selection.as_ref().unwrap().ordered_cells(),
+        ((12, 0), (12, 1))
+    );
+
+    // The selected row can leave the viewport during a drag. A later patch,
+    // including an in-flight content revision, must keep that absolute range.
+    let mut scrolled = surface_at(4, 5, true);
+    scrolled.panes[0]
+        .scroll
+        .as_mut()
+        .unwrap()
+        .offset_from_bottom = 2;
+    assert!(matches!(
+        state.apply_pane_surface_patch(crate::protocol::PaneSurfacePatch {
+            boot_id: scrolled.boot_id,
+            projection_revision: scrolled.projection_revision,
+            base_surface_revision: 3,
+            surface_revision: 4,
+            panes: scrolled.panes,
+            rows: vec![],
+            cursor: scrolled.frame.cursor,
+        }),
+        super::super::surface_patch::ClientPaneSurfacePatchOutcome::Applied(_)
+    ));
+    assert!(state.selection.as_ref().unwrap().is_in_progress());
+    assert_eq!(
+        state.selection.as_ref().unwrap().ordered_cells(),
+        ((12, 0), (12, 1))
+    );
 
     for (surface_revision, content_revision, width, alternate_screen_active) in
-        [(4, 6, 4, false), (5, 8, 3, false), (6, 9, 3, false)]
+        [(5, 6, 4, false), (6, 8, 3, false)]
     {
         state.selection = Some(crate::selection::Selection::absolute_anchor(
             "pane_1".to_owned(),

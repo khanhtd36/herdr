@@ -40,16 +40,14 @@ pub(super) fn forward_proxied_api_response(
         std::sync::mpsc::Sender<String>,
         std::sync::mpsc::Receiver<String>,
     )>,
-) -> bool {
-    let Some((respond_to, response_rx)) = proxy else {
-        return false;
-    };
-    let Ok(response) = response_rx.recv() else {
-        return false;
-    };
-    let succeeded = serde_json::from_str::<api::schema::SuccessResponse>(&response).is_ok();
+) -> Option<api::schema::ResponseResult> {
+    let (respond_to, response_rx) = proxy?;
+    let response = response_rx.recv().ok()?;
+    let result = serde_json::from_str::<api::schema::SuccessResponse>(&response)
+        .ok()
+        .map(|response| response.result);
     let _ = respond_to.send(response);
-    succeeded
+    result
 }
 
 impl HeadlessServer {
@@ -232,6 +230,7 @@ impl HeadlessServer {
             Method::CommandInvoke(_)
                 | Method::PaneClose(_)
                 | Method::PaneEditScrollback(_)
+                | Method::PaneMove(_)
                 | Method::PaneSplit(_)
                 | Method::TabClose(_)
                 | Method::TabCreate(_)
@@ -259,6 +258,7 @@ impl HeadlessServer {
                 | Method::PaneFocusDirection(_)
                 | Method::PaneInputSet(_)
                 | Method::PaneLinkActivate(_)
+                | Method::PaneLinkResolve(_)
                 | Method::PaneRename(_)
                 | Method::PaneResize(_)
                 | Method::PaneScroll(_)
@@ -516,7 +516,7 @@ impl HeadlessServer {
 
     fn finish_shell_tab_geometry_change(&mut self, start_pending_agent_resumes: bool) {
         for client in self.clients.values_mut() {
-            client.request_repaint();
+            client.request_recompute();
         }
         if !start_pending_agent_resumes {
             self.app.pending_agent_resume_deadline = None;
@@ -529,7 +529,7 @@ impl HeadlessServer {
             .start_pending_agent_resumes(self.app.pending_agent_resume_due(now))
         {
             for client in self.clients.values_mut() {
-                client.request_repaint();
+                client.request_recompute();
             }
         }
     }
@@ -854,14 +854,28 @@ impl HeadlessServer {
             &msg.request.method,
             api::schema::Method::WorktreeOpen(params) if params.focus
         );
-        let response_proxy = (agent_focus_target.is_some() || inspect_worktree_open).then(|| {
-            let (proxy_tx, proxy_rx) = std::sync::mpsc::channel();
-            let original = std::mem::replace(&mut msg.respond_to, proxy_tx);
-            (original, proxy_rx)
-        });
+        let inspect_pane_move = matches!(
+            &msg.request.method,
+            api::schema::Method::PaneMove(params) if params.focus
+        );
+        let response_proxy = (agent_focus_target.is_some()
+            || inspect_worktree_open
+            || inspect_pane_move)
+            .then(|| {
+                let (proxy_tx, proxy_rx) = std::sync::mpsc::channel();
+                let original = std::mem::replace(&mut msg.respond_to, proxy_tx);
+                (original, proxy_rx)
+            });
         let reconcile = Self::shell_locations_may_need_reconcile(&msg.request.method);
         let changed = self.handle_api_request_with_shutdown_check_inner(msg, false);
-        let proxied_request_succeeded = forward_proxied_api_response(response_proxy);
+        let proxied_result = forward_proxied_api_response(response_proxy);
+        let proxied_request_succeeded = proxied_result.is_some();
+        // Same-tab and zoomed moves succeed without moving or requesting focus.
+        let pane_move_focus_succeeded = inspect_pane_move
+            && matches!(
+                &proxied_result,
+                Some(api::schema::ResponseResult::PaneMove { move_result }) if move_result.changed
+            );
         let successful_agent_focus_target = proxied_request_succeeded
             .then(|| {
                 agent_focus_target.as_deref().and_then(|target| {
@@ -880,11 +894,16 @@ impl HeadlessServer {
             .is_some_and(|target| self.default_shell_target() == Some(target));
         let public_focus_succeeded = explicit_focus_succeeded
             || (create_focus_requested && target_changed)
-            || (inspect_worktree_open && proxied_request_succeeded);
+            || (inspect_worktree_open && proxied_request_succeeded)
+            || pane_move_focus_succeeded;
         if public_focus_succeeded {
             self.focus_all_shell_clients_on_default_target();
         }
-        if reconcile || target_changed || self.app.state.popup_pane.is_some() != popup_before {
+        if reconcile
+            || target_changed
+            || pane_move_focus_succeeded
+            || self.app.state.popup_pane.is_some() != popup_before
+        {
             self.reconcile_client_shell_locations();
         }
         let geometry_changed =

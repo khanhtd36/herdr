@@ -225,11 +225,54 @@ verification:
 cargo nextest run --locked resize_clears_marked_prompt_so_shell_redraw_does_not_stack
 ```
 
-## 0005 return the topmost prompt continuation from promptIterator left_up
+## 0005 bounded word selection for wrapped link activation
 
 status: active
 
-patch: `vendor/patches/libghostty-vt/0005-prompt-iterator-left-up-topmost-continuation.patch`
+patch: `vendor/patches/libghostty-vt/0005-bounded-word-selection.patch`
+
+herdr issue: https://github.com/herdrdev/herdr/issues/1282
+
+upstream discussion: not opened
+
+upstream pr: not opened; related merged PR https://github.com/ghostty-org/ghostty/pull/10132
+implements URL selection in the application layer, not the libghostty C API.
+
+vendored base: `44f2a44df7e8c4a0c6df3f7d872ef3d7ead88e51`
+
+local files:
+
+- `vendor/libghostty-vt/include/ghostty/vt/selection.h`
+- `vendor/libghostty-vt/src/lib_vt.zig`
+- `vendor/libghostty-vt/src/terminal/Screen.zig`
+- `vendor/libghostty-vt/src/terminal/c/main.zig`
+- `vendor/libghostty-vt/src/terminal/c/selection.zig`
+
+reason: Ctrl+click must resolve a wrapped token beyond the visible viewport
+without scanning an arbitrarily long logical line. The new, opt-in API shares
+one cell-inspection budget across both directions and returns no selection on
+exhaustion, never a truncated link. Its scan skips wide-character spacer cells.
+The existing word-selection functions and option layouts remain unchanged;
+only Herdr's link activation uses the new function.
+
+remove when: upstream provides an equivalent bounded, wrap-aware selection API
+that handles wide-character spacers, and Herdr passes the tests below using it
+without this patch.
+
+verification:
+
+```sh
+just test-one link_target
+just test-one link_activation
+just test-one ctrl_click
+just check
+```
+
+## 0006 return the topmost prompt continuation from promptIterator left_up
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0006-prompt-iterator-left-up-topmost-continuation.patch`
 
 herdr issue: not opened (private fork, no upstream tracking)
 

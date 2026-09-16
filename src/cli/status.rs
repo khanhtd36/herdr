@@ -252,6 +252,8 @@ struct ClientStatusJson {
     protocol: u32,
     endpoint_protocol_generation: u32,
     endpoint_capabilities: Vec<&'static str>,
+    remote_host_bridge: bool,
+    remote_bridge_idle_timeout: bool,
     binary: String,
     session: Option<String>,
 }
@@ -297,6 +299,8 @@ fn client_status_json() -> ClientStatusJson {
             crate::protocol::endpoint::PRESENTATION_EFFECTS_FENCE_CAPABILITY,
             crate::protocol::endpoint::HEALTH_CHECK_CAPABILITY,
         ],
+        remote_host_bridge: true,
+        remote_bridge_idle_timeout: crate::platform::REMOTE_BRIDGE_IDLE_TIMEOUT_SUPPORTED,
         binary: current_exe_label(),
         session: crate::session::active_name(),
     }
