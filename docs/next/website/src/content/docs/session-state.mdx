@@ -118,6 +118,8 @@ Unlike snapshot restore, pane history replay, and native agent session restore, 
 
 A successful handoff preserves long-lived server-owned session state: pane PTYs and processes, agent identity and durable metadata, and plugin/session state needed by the replacement server. It does not preserve transient coordination across the replacement boundary. In-flight CLI or API requests, waits, subscription streams, client sockets, and pane-to-pane messages may be interrupted; clients should reconnect and retry them.
 
+Updated Unix servers can send more than 64 panes in one handoff by transferring them in batches. The sending server must already contain this support: an older running server still enforces its 64-pane limit on the first upgrade. That limit may require a normal server restart, which ends pane processes. Batching does not change update installation order or remove other handoff compatibility requirements.
+
 Live handoff is experimental and opt-in:
 
 ```bash
