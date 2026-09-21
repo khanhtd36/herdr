@@ -1047,6 +1047,8 @@ fn apply_noninteractive_ssh_options(command: &mut Command) {
 }
 
 fn apply_managed_ssh_options(command: &mut Command, options: Option<&ManagedSshOptions>) {
+    // Compress the first connection too: multiplexed bridges inherit the master's transport.
+    command.arg("-C");
     let Some(options) = options else {
         return;
     };
@@ -1064,6 +1066,7 @@ fn apply_managed_ssh_options(command: &mut Command, options: Option<&ManagedSshO
 }
 
 fn apply_managed_scp_options(command: &mut Command, options: Option<&ManagedSshOptions>) {
+    command.arg("-C");
     let Some(options) = options else {
         return;
     };
@@ -3625,6 +3628,7 @@ mod tests {
         assert_eq!(
             args,
             vec![
+                "-C".to_string(),
                 "-F".to_string(),
                 config_path.to_string_lossy().into_owned(),
                 "-S".to_string(),
@@ -3646,6 +3650,7 @@ mod tests {
         assert_eq!(
             scp_args,
             vec![
+                "-C".to_string(),
                 "-F".to_string(),
                 config_path.to_string_lossy().into_owned(),
                 "-o".to_string(),
@@ -3692,6 +3697,7 @@ mod tests {
         assert_eq!(
             args,
             vec![
+                "-C".to_string(),
                 "-F".to_string(),
                 config_path.to_string_lossy().into_owned(),
                 "-T".to_string(),
@@ -3705,7 +3711,11 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             scp_args,
-            vec!["-F".to_string(), config_path.to_string_lossy().into_owned(),]
+            vec![
+                "-C".to_string(),
+                "-F".to_string(),
+                config_path.to_string_lossy().into_owned(),
+            ]
         );
     }
 
@@ -3749,6 +3759,7 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         for required in [
+            "-C",
             "BatchMode=yes",
             "NumberOfPasswordPrompts=0",
             "StrictHostKeyChecking=yes",
@@ -3844,7 +3855,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_ssh_command_is_plain_without_managed_config() {
+    fn remote_ssh_commands_compress_without_managed_config() {
         let ssh = RemoteSsh {
             target: "example".to_string(),
             session_name: crate::session::DEFAULT_SESSION_NAME.into(),
@@ -3858,8 +3869,8 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
 
-        assert_eq!(args, vec!["-T".to_string(), "example".to_string()]);
-        assert!(ssh.scp_command().get_args().next().is_none());
+        assert_eq!(args, vec!["-C", "-T", "example"]);
+        assert_eq!(ssh.scp_command().get_args().collect::<Vec<_>>(), vec!["-C"]);
     }
 
     #[test]

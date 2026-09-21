@@ -2008,31 +2008,10 @@ GHOSTTY_API void ghostty_terminal_free(GhosttyTerminal terminal);
 GHOSTTY_API void ghostty_terminal_reset(GhosttyTerminal terminal);
 
 /**
- * Erase the primary screen's scrollback history always, and its active
- * content according to whether the cursor is at an idle shell prompt
- * (based on OSC 133 semantic-prompt markers the shell has reported).
- * Colors, terminal modes, and cursor position are never touched --
- * callers that also want the shell to redraw its prompt should nudge
- * it (e.g. a form feed byte through the pty) rather than repositioning
- * the cursor locally, the same way real Ghostty's own clear_screen
- * action does. It always targets the primary screen specifically,
- * regardless of which screen is currently active, so it is safe to
- * call while the alternate screen (e.g. a fullscreen program like vim
- * or tmux) is active: the running program's display is left completely
- * untouched, and the primary screen is clean when the program exits.
- *
- * If the cursor is at an idle prompt, the entire active screen is
- * cleared. Otherwise -- mid-command output, or no shell integration --
- * only rows strictly above the cursor's row are erased, matching real
- * Ghostty's own clear_screen action: this avoids leaving the screen
- * blank with no visible content when there is no shell integration
- * available to redraw a prompt afterward.
- *
- * @param terminal The terminal handle (may be NULL, in which case this is a no-op)
- * @return whether the cursor was at an idle prompt (i.e. whether the
- *         full-screen branch ran)
- *
- * @ingroup terminal
+ * Clear screen and history, retaining the cursor's soft-wrapped active line.
+ * Does not alter the VT parser or write to the child process. Returns false
+ * without changing the terminal on the alternate screen or for a NULL handle.
+ * Otherwise returns true and moves the retained line to the top of the screen.
  */
 GHOSTTY_API bool ghostty_terminal_clear_screen(GhosttyTerminal terminal);
 
@@ -2062,33 +2041,6 @@ GHOSTTY_API GhosttyResult ghostty_terminal_resize(GhosttyTerminal terminal,
                                       uint16_t rows,
                                       uint32_t cell_width_px,
                                       uint32_t cell_height_px);
-
-/**
- * Set whether the shell is assumed to redraw its own prompt after a resize.
- *
- * When enabled, a resize clears the existing prompt lines before reflowing,
- * so the shell's own redraw replaces them instead of stacking a second copy
- * below the reflowed original. This only takes effect once the shell has
- * marked a prompt with OSC 133, since the clear is gated on the cursor not
- * being on command output.
- *
- * libghostty-vt defaults this to false for embedders that may not have shell
- * integration installed, whereas real Ghostty runs with it enabled. Embedders
- * whose shells do emit OSC 133 should turn it on to get Ghostty's own resize
- * behavior.
- *
- * Only the boolean states are exposed here; the "last" variant (Bash, which
- * redraws only the final prompt line) is reachable through
- * OSC 133;A;redraw=last.
- *
- * @param terminal The terminal handle (may be NULL, in which case this is a no-op)
- * @param value Whether the shell redraws its prompt after a resize
- *
- * @ingroup terminal
- */
-GHOSTTY_API void ghostty_terminal_set_shell_redraws_prompt(
-    GhosttyTerminal terminal,
-    bool value);
 
 /**
  * Set an option on the terminal.

@@ -1504,85 +1504,38 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
     t.fullReset();
 }
 
-/// Erase the primary screen's scrollback history always, and its active
-/// content according to whether the cursor is at an idle shell prompt
-/// (see `Terminal.cursorIsAtPrompt`). Colors, terminal modes, and
-/// cursor position are never touched -- callers that also want the
-/// shell to redraw its prompt should nudge it (e.g. a form feed byte
-/// through the pty) rather than repositioning the cursor locally here,
-/// the same way real Ghostty's own clear_screen action does: the
-/// shell's own redraw is what actually repositions things, and a local
-/// reposition first would only fight it. It always targets the primary
-/// screen specifically (not whichever screen is currently active), so
-/// it is safe to call while the alternate screen (e.g. vim, tmux) is
-/// active: the running program's display is left completely untouched,
-/// and the primary screen is clean when the program exits.
-///
-/// If the cursor is at an idle prompt, the entire active screen is
-/// cleared. Otherwise -- mid-command output, or no shell integration --
-/// rows strictly above the cursor's row are erased via `eraseActive`,
-/// exactly as real Ghostty's own clear_screen fallback does. That
-/// physically removes those rows and shifts the survivors up, so the
-/// cursor's row (typically the shell's prompt) ends up at the top of
-/// the screen. This shift is the entire reason Cmd+K appears to "move
-/// the prompt to the top left" even with no shell integration and
-/// nothing written to the pty -- so it must not be replaced with an
-/// in-place clear such as `clearRows`, which erases the same cells but
-/// leaves the prompt stranded wherever it already was.
-///
-/// Returns whether the cursor was at an idle prompt (i.e. whether the
-/// full-screen branch ran), so callers can decide whether to also
-/// nudge the shell to redraw its prompt.
-pub fn clear_screen(terminal_: Terminal) callconv(lib.calling_conv) bool {
+/// Clear output without feeding synthetic bytes into the child's VT stream.
+pub fn clearScreen(terminal_: Terminal) callconv(lib.calling_conv) bool {
     const t: *ZigTerminal = (terminal_ orelse return false).terminal;
-    const primary = t.screens.get(.primary) orelse return false;
-    primary.eraseHistory(null);
+    if (t.screens.active_key == .alternate) return false;
+    const screen = t.screens.active;
 
-    const at_prompt = t.cursorIsAtPrompt();
-    if (at_prompt) {
-        primary.clearRows(.{ .active = .{} }, null, false);
-        primary.cursor.pending_wrap = false;
-    } else if (primary.cursor.y > 0) {
-        primary.eraseActive(primary.cursor.y - 1);
-        // `eraseActive` physically removes rows and shifts the survivors
-        // up, but only marks the shifted rows dirty. The rows regrown at
-        // the bottom to refill the active area keep their stale dirty
-        // state, so a differential renderer never repaints them and the
-        // erased content stays visible on screen. Mark the whole active
-        // area dirty so the next render reflects the shift.
-        var y: size.CellCountInt = 0;
-        while (y < primary.pages.rows) : (y += 1) {
-            const pin = primary.pages.pin(.{ .active = .{ .y = y } }) orelse break;
-            pin.markDirty();
-        }
+    var first = screen.cursor.y;
+    while (first > 0) {
+        const pin = screen.pages.pin(.{ .active = .{ .y = first } }).?;
+        if (!pin.rowAndCell().row.wrap_continuation) break;
+        first -= 1;
     }
-    return at_prompt;
-}
+    var last = screen.cursor.y;
+    while (last + 1 < t.rows) {
+        const pin = screen.pages.pin(.{ .active = .{ .y = last } }).?;
+        if (!pin.rowAndCell().row.wrap) break;
+        last += 1;
+    }
 
-/// Set whether the shell is assumed to redraw its own prompt after a
-/// resize, matching `Terminal.flags.shell_redraws_prompt`.
-///
-/// When true, a resize clears the existing prompt lines before reflowing
-/// (see `Screen.resize`'s `prompt_redraw` handling) so the shell's own
-/// redraw replaces them instead of stacking a second copy below the
-/// reflowed original. This only takes effect once the shell has marked a
-/// prompt with OSC 133, since the clear is gated on the cursor not being
-/// on command output.
-///
-/// libghostty-vt defaults this to false for embedders that may not have
-/// shell integration installed, whereas real Ghostty runs with it true.
-/// Embedders whose shells do emit OSC 133 should turn it on to get
-/// Ghostty's own resize behavior.
-///
-/// Only the boolean states are exposed here; the `last` variant (Bash,
-/// which redraws only the final prompt line) is reachable through
-/// OSC 133;A;redraw=last.
-pub fn set_shell_redraws_prompt(
-    terminal_: Terminal,
-    value: bool,
-) callconv(lib.calling_conv) void {
-    const t: *ZigTerminal = (terminal_ orelse return).terminal;
-    t.flags.shell_redraws_prompt = if (value) .true else .false;
+    screen.clearSelection();
+    if (last + 1 < t.rows) {
+        screen.clearRows(.{ .active = .{ .y = last + 1 } }, null, false);
+    }
+    screen.eraseHistory(null);
+    if (first > 0) screen.eraseActive(first - 1);
+    screen.pages.pin(.{ .active = .{} }).?.rowAndCell().row.wrap_continuation = false;
+    screen.scroll(.active);
+    if (comptime build_options.kitty_graphics) {
+        screen.kitty_images.delete(t.io(), screen.alloc, t, .{ .all = true });
+    }
+    t.flags.dirty.clear = true;
+    return true;
 }
 
 /// C: GhosttyKittyGraphics

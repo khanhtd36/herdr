@@ -1102,6 +1102,7 @@ impl App {
             }
             Method::PaneResize(params) => return self.handle_pane_resize(request.id, params),
             Method::PaneScroll(params) => return self.handle_pane_scroll(request.id, params),
+            Method::PaneClear(target) => return self.handle_pane_clear(request.id, target),
             Method::PaneEditScrollback(target) => {
                 return self.handle_pane_edit_scrollback(request.id, target);
             }
@@ -1175,7 +1176,6 @@ impl App {
                 return self.handle_pane_send_input(request.id, params);
             }
             Method::PaneClose(target) => return self.handle_pane_close(request.id, target),
-            Method::PaneClear(target) => return self.handle_pane_clear_screen(request.id, target),
             Method::PaneMark(params) => return self.handle_pane_mark(request.id, params),
             Method::PaneUnmark(params) => return self.handle_pane_unmark(request.id, params),
             Method::PaneSwapMarked(params) => {

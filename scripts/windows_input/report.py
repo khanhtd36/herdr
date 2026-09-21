@@ -78,6 +78,12 @@ def catalogue():
         ("paste-escape-looking", "literal [200~ and \\x1b[31m\nend"),
     ]:
         cases.append(dict(id=name, kind="paste", text=text, expected={mode: {"paste": text} for mode in MODES[1:]}))
+    cases.append(dict(id="clipboard-image", kind="clipboard-image",
+                      expected={mode: {"clipboard_image": True,
+                                       "sha256": "4BA8D4FD5AB42544FEEFF22D50E84412502433CC95952FD1DF9A5293588DDBEA"}
+                                for mode in MODES[1:]}))
+    cases.append(dict(id="clipboard-mixed", kind="clipboard-mixed", text="clipboard text wins",
+                      expected={mode: {"paste": "clipboard text wins"} for mode in MODES[1:]}))
     cases.append(dict(id="mouse-interleave", kind="mouse-interleave", text="mouse\npaste",
                       expected={mode: {"mouse_interleave": True} for mode in MODES[1:]}))
     cases.append(dict(id="mouse-focus-refresh", kind="mouse-focus-refresh",
@@ -115,10 +121,35 @@ def catalogue():
         ("ctrl-shift-end", "Qualify Ctrl+Shift+End with the Windows Terminal scroll binding explicitly controlled."),
         ("paste-supplementary", "Qualify supplementary-plane clipboard text, including emoji, against the direct-host baseline."),
         ("paste-burst", "Qualify a 200-line clipboard burst with the host multiline-paste warning configured or handled explicitly."),
-        ("clipboard-nontext", "Qualify supported image/file clipboard integrations separately; do not infer from text paste."),
     ]:
         cases.append(dict(id=name, kind="qualification", prompt=prompt, expected={}))
     return dict(schema=1, widths=WIDTHS, heights=HEIGHTS, modes=MODES, cases=cases)
+
+
+def classification_of_client_events(trace_lines):
+    """Classify how a paste reached the pane from the mapper's client-event trace.
+
+    The pane capture alone cannot tell a paste the terminal issued from a
+    reaction to a consumed key or an empty bracketed paste (#4314). The mapper
+    trace records the decoded client events, so the batch that carried the
+    paste identifies its origin. Returns one of:
+    "terminal-paste", "empty-paste", "key-event", "none", or None when the
+    trace is unavailable. Only "terminal-paste" and "empty-paste" are positive
+    evidence; callers must not treat the others as bridge proof.
+    """
+    if trace_lines is None:
+        return None
+    for line in trace_lines:
+        if not isinstance(line, str):
+            return None
+        if 'Paste { text: ""' in line:
+            return "empty-paste"
+        if "Paste {" in line:
+            return "terminal-paste"
+    for line in trace_lines:
+        if isinstance(line, str) and 'Key {' in line and "kind: Press" in line:
+            return "key-event"
+    return "none"
 
 
 def verdict(case, mode, evidence):
@@ -132,6 +163,8 @@ def verdict(case, mode, evidence):
         return "inconclusive", "Missing readiness, focus, or complete capture"
     if evidence.get("error"):
         return "inconclusive", evidence["error"]
+    if case["kind"] == "clipboard-image" and evidence.get("path") == "herdr":
+        return "not_run", "Clipboard image bridging is active only for remote clients"
     if evidence.get("path") == "herdr" and case["id"] in ("page-up", "page-down") and "vk" not in expected:
         expected = {"hex": [""]}  # Plain page keys intentionally control Herdr's host scrollback.
     def geometry(name):
@@ -204,6 +237,36 @@ def verdict(case, mode, evidence):
         raw = bytes.fromhex(evidence["hex"])
     except (KeyError, ValueError, TypeError):
         return "inconclusive", "Missing or malformed raw bytes"
+    if expected.get("clipboard_image"):
+        origin = evidence.get("paste_origin")
+        if evidence.get("path") == "direct":
+            if raw != b"\x1b[200~\x1b[201~":
+                return "fail", "Terminal did not emit an empty bracketed paste for image-only clipboard"
+            if origin not in (None, "empty-paste"):
+                return "fail", f"Direct empty paste was decoded as {origin}, not an empty paste"
+            return "pass", "Terminal emitted an empty bracketed paste for image-only clipboard"
+        if evidence.get("path") != "herdr-remote":
+            return "not_run", "Clipboard image bridge requires the remote-client gauntlet path"
+        if not raw.startswith(b"\x1b[200~") or not raw.endswith(b"\x1b[201~"):
+            return "fail", "Remote clipboard image did not reach the pane as one paste"
+        try:
+            path = raw[6:-6].decode("utf-8")
+        except UnicodeDecodeError:
+            return "fail", "Staged clipboard image path is not UTF-8"
+        valid_path = re.fullmatch(r"[A-Za-z]:\\.*\\herdr-clipboard-images-[^\\]+\\[^\\]+\.png", path)
+        if not valid_path:
+            return "fail", "Pane did not receive a staged clipboard PNG path"
+        # A staged image must come from the bridge reacting to an empty paste, not
+        # from a paste the terminal issued for text on the clipboard (#4314).
+        if origin == "terminal-paste":
+            return "fail", "Terminal issued the paste; the remote image bridge did not react to the empty paste"
+        if origin != "empty-paste":
+            # Without the mapper trace there is no evidence the bridge reacted to
+            # an empty paste; a staged path alone cannot qualify the bridge.
+            return "inconclusive", "Missing client trace evidence of an empty-paste bridge reaction"
+        return (("pass", "Exact clipboard PNG was staged and its path reached the pane")
+                if evidence.get("staged_image_sha256") == expected["sha256"] else
+                ("fail", "Staged clipboard image contents differ from the fixture"))
     if expected.get("mouse_interleave"):
         motion = rb"(?:\x1b\[<35;\d+;\d+M)+"
         newline = rb"(?:\r\n|\r|\n)"
@@ -276,6 +339,9 @@ def summarize(document):
             raise ValueError(f"Duplicate observation identity: {identity}")
         seen.add(identity)
         case = cases[observation["case"]]
+        paste_origin = classification_of_client_events(observation.get("client_events"))
+        if paste_origin is not None:
+            observation = {**observation, "paste_origin": paste_origin}
         status, reason = verdict(case, observation["mode"], observation)
         scope = "direct_host" if observation.get("path") == "direct" else "through_herdr_not_yet_attributed"
         if status in ("pass", "fail"):
@@ -332,6 +398,7 @@ def qualification_matrix(result):
         ("CR/LF/CRLF paste", {"paste-lf", "paste-crlf", "paste-cr"}, None),
         ("Unicode/whitespace paste", {"paste-unicode", "paste-whitespace"}, None),
         ("Paste framing/ordering", {case["id"] for case in catalogue()["cases"] if case["kind"] == "paste"}, None),
+        ("Remote clipboard image", {"clipboard-image", "clipboard-mixed"}, None),
         ("Resize 120 -> 80", {"letter-a", "shift-enter", "paste-lf"}, 80),
         ("Mouse while typing/pasting", {"mouse-interleave"}, None),
         ("Mouse after focus regain", {"mouse-focus-refresh"}, None),
@@ -378,7 +445,8 @@ def qualification_matrix(result):
     table = []
     for name, case_ids, width in groups:
         herdr_modes = {"legacy"} if name in {"Mouse after resize", "Runtime mode transitions"} else {"mok2"} if "Enter" in name or name in {"Resize 120 -> 80", "Dead-key composition", "AltGr", "IME composition"} else {"legacy"}
-        table.append((name, cell(case_ids, width, "herdr", herdr_modes),
+        herdr_path = "herdr-remote" if name == "Remote clipboard image" else "herdr"
+        table.append((name, cell(case_ids, width, herdr_path, herdr_modes),
                       cell(case_ids, width, "direct", {"legacy"}), cell(case_ids, width, "direct", {"kitty"})))
     return table
 
@@ -386,10 +454,10 @@ def qualification_matrix(result):
 def herdr_protocol_label(result):
     runs = {(host.get("channel"), run.get("path"), run.get("mode"), run.get("nonce"))
             for host in result.get("hosts", []) for run in host.get("runs", [])
-            if run.get("path") == "herdr" and run.get("nonce")}
+            if run.get("path") in {"herdr", "herdr-remote"} and run.get("nonce")}
     proven = {(row.get("host"), row.get("path"), row.get("mode"), row.get("nonce"))
               for row in result.get("observations", [])
-              if row.get("path") == "herdr" and row.get("input_reader") == "windows-console"
+              if row.get("path") in {"herdr", "herdr-remote"} and row.get("input_reader") == "windows-console"
               and row.get("input_transport") == "win32-serialized" and row.get("nonce")}
     return "Win32 (Herdr)*" if runs and runs <= proven else "Herdr default (UNKNOWN)*"
 
@@ -418,7 +486,7 @@ def main():
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if args.command == "report":
         counts = result["counts"]
-        through_failures = sum(row["status"] == "fail" and row.get("path") == "herdr" for row in result["observations"])
+        through_failures = sum(row["status"] == "fail" and row.get("path") != "direct" for row in result["observations"])
         direct_failures = sum(row["status"] == "fail" and row.get("path") == "direct" for row in result["observations"])
         print(f"Observed: {counts['pass']} pass, {counts['fail']} fail, {counts['unsupported']} unsupported, "
               f"{counts['inconclusive']} inconclusive, {counts['not_run']} not run; "

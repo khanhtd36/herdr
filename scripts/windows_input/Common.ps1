@@ -40,7 +40,16 @@ function New-GauntletProcess($Exe, $Arguments, $Plan, [switch] $Capture) {
         $info.Environment['XDG_CONFIG_HOME'] = $Plan.config_home
         $info.Environment['HERDR_SESSION'] = $Plan.session
         if ($Plan.profile -ne 'default') { $info.Environment['HERDR_WINDOWS_INPUT_PROBE'] = $Plan.profile }
-        if ($Plan.path -eq 'herdr') { $info.Environment['HERDR_WINDOWS_INPUT_TRACE_FILE'] = $Plan.input_trace }
+        if ($Plan.path -in @('herdr', 'herdr-remote')) { $info.Environment['HERDR_WINDOWS_INPUT_TRACE_FILE'] = $Plan.input_trace }
+        if ($Plan.path -in @('herdr', 'herdr-remote')) {
+            # Enable the mapper's client-event trace so a report can distinguish a
+            # terminal-issued paste from a bridge reaction (see README, #4314).
+            $info.Environment['HERDR_WINDOWS_INPUT_TRACE'] = '1'
+            $info.Environment['HERDR_LOG'] = 'herdr=info'
+        }
+        if ($Plan.path -eq 'herdr-remote') {
+            $info.Environment['HERDR_REMOTE_KEYBINDINGS'] = 'local'
+        }
     }
     $info.RedirectStandardOutput = $Capture.IsPresent
     $info.RedirectStandardError = $Capture.IsPresent

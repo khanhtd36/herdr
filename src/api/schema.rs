@@ -165,6 +165,8 @@ pub enum Method {
     PaneResize(PaneResizeParams),
     #[serde(rename = "pane.scroll")]
     PaneScroll(PaneScrollParams),
+    #[serde(rename = "pane.clear")]
+    PaneClear(PaneTarget),
     #[serde(rename = "pane.edit_scrollback")]
     PaneEditScrollback(PaneTarget),
     #[serde(rename = "pane.selection.read")]
@@ -230,8 +232,6 @@ pub enum Method {
     PaneReleaseAgent(PaneReleaseAgentParams),
     #[serde(rename = "pane.close")]
     PaneClose(PaneTarget),
-    #[serde(rename = "pane.clear")]
-    PaneClear(PaneTarget),
     #[serde(rename = "pane.mark")]
     PaneMark(EmptyParams),
     #[serde(rename = "pane.unmark")]

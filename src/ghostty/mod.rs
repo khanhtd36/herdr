@@ -846,16 +846,6 @@ impl Terminal {
             kitty_fingerprints: Mutex::new(HashMap::new()),
             kitty_empty_generation: Cell::new(None),
         };
-        // Match real Ghostty rather than the libghostty-vt embedder default:
-        // clear the old prompt lines on resize so the shell's own redraw
-        // replaces them instead of stacking a copy below the reflowed
-        // original. Gated inside the core on the shell having marked a prompt
-        // with OSC 133, so shells without integration are unaffected.
-        // SAFETY: terminal.raw is a live terminal handle.
-        unsafe {
-            ffi::ghostty_terminal_set_shell_redraws_prompt(terminal.raw, true);
-        }
-
         let userdata = (&mut *terminal.callback_state as *mut TerminalCallbackState).cast();
         let glyph_protocol = false;
         let terminfo_name = ffi::GhosttyString {
@@ -1032,17 +1022,6 @@ impl Terminal {
         }
         self.callback_state.size_report = size_report;
         Ok(())
-    }
-
-    /// Erases scrollback always, and active content according to whether
-    /// the cursor is at an idle shell prompt. Returns whether it was
-    /// (i.e. whether the full-screen branch ran). Always targets the
-    /// primary screen, so it is safe to call while the alternate screen
-    /// (e.g. vim, tmux) is active -- that screen is left alone. See
-    /// `ffi::ghostty_terminal_clear_screen`.
-    pub fn clear_screen(&mut self) -> bool {
-        // SAFETY: self.raw is a live terminal handle for self's lifetime.
-        unsafe { ffi::ghostty_terminal_clear_screen(self.raw) }
     }
 
     pub fn enable_kitty_graphics(&mut self) -> Result<(), Error> {
@@ -1638,6 +1617,10 @@ impl Terminal {
         }
 
         Ok(text)
+    }
+
+    pub fn clear_screen(&mut self) -> bool {
+        unsafe { ffi::ghostty_terminal_clear_screen(self.raw) }
     }
 
     pub fn scroll_viewport_bottom(&mut self) {

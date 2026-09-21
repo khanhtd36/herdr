@@ -21,7 +21,9 @@ mod migration_tests;
 #[cfg(windows)]
 mod windows_recent_fallback;
 
-use super::cursor::{CursorPositionSettleState, DecscusrTracker, CURSOR_POSITION_SETTLE};
+#[cfg(test)]
+use super::cursor::CURSOR_POSITION_SETTLE;
+use super::cursor::{CursorPositionSettleState, DecscusrTracker};
 use super::{
     input::{
         ghostty_key_event_from_terminal_key, ghostty_mouse_encoder_for_terminal,
@@ -258,7 +260,7 @@ impl PaneTerminal {
         self.ghostty.scroll_reset();
     }
 
-    pub fn clear_screen(&self) -> bool {
+    pub fn clear_screen(&self) -> Result<(), String> {
         self.ghostty.clear_screen()
     }
 
@@ -1449,7 +1451,8 @@ impl GhosttyPaneTerminal {
             .terminal
             .mode_get(crate::ghostty::MODE_SYNCHRONIZED_OUTPUT)
             .unwrap_or(false);
-        if CURSOR_POSITION_SETTLE_ENABLED {
+        // Intermediate synchronized-frame positions must not become settled cursors.
+        if CURSOR_POSITION_SETTLE_ENABLED && !synchronized_output {
             let cursor_started = crate::render_prof::timer();
             let cursor_after_write = current_cursor_state(&mut core);
             crate::render_prof::duration_since("pty.cursor_state_update", cursor_started);
@@ -1467,7 +1470,7 @@ impl GhosttyPaneTerminal {
         let render_delay = render_delay_after_pty_write(
             synchronized_output,
             has_kitty_graphics_sequence,
-            cursor_position_settle_pending(&core),
+            core.cursor_settle_state.render_delay(),
             CURSOR_POSITION_SETTLE_ENABLED,
         );
         if request_render {
@@ -1759,11 +1762,19 @@ impl GhosttyPaneTerminal {
         }
     }
 
-    pub fn clear_screen(&self) -> bool {
-        self.core
+    pub fn clear_screen(&self) -> Result<(), String> {
+        let mut core = self
+            .core
             .lock()
-            .map(|mut core| core.terminal.clear_screen())
-            .unwrap_or(false)
+            .map_err(|_| "terminal lock poisoned".to_owned())?;
+        if core.terminal.clear_screen() {
+            #[cfg(windows)]
+            {
+                core.recent_fallback = windows_recent_fallback::Cache::default();
+                windows_recent_fallback::update(&mut core);
+            }
+        }
+        Ok(())
     }
 
     pub fn set_scroll_offset_from_bottom(&self, lines: usize) {
@@ -2454,10 +2465,6 @@ fn encoded_key_preserves_event_kind(
         })
 }
 
-fn cursor_position_settle_pending(core: &GhosttyPaneCore) -> bool {
-    core.cursor_settle_state.pending()
-}
-
 fn effective_cursor_state(
     core: &mut GhosttyPaneCore,
     current: Option<TerminalCursorState>,
@@ -2472,17 +2479,16 @@ fn effective_cursor_state(
 fn render_delay_after_pty_write(
     synchronized_output: bool,
     has_kitty_graphics_sequence: bool,
-    cursor_position_settle_pending: bool,
+    cursor_position_settle_delay: Option<Duration>,
     cursor_position_settle_enabled: bool,
 ) -> Option<Duration> {
     if synchronized_output {
         None
-    } else if has_kitty_graphics_sequence {
-        Some(KITTY_GRAPHICS_REDRAW_SETTLE)
-    } else if cursor_position_settle_enabled && cursor_position_settle_pending {
-        Some(CURSOR_POSITION_SETTLE)
     } else {
-        None
+        let cursor_delay = cursor_position_settle_enabled
+            .then_some(cursor_position_settle_delay)
+            .flatten();
+        cursor_delay.max(has_kitty_graphics_sequence.then_some(KITTY_GRAPHICS_REDRAW_SETTLE))
     }
 }
 
@@ -4344,11 +4350,108 @@ mod tests {
 
         let result = pane.process_pty_bytes(pane_id, 0, b"\x1b[6;21H", &tx);
 
-        assert_eq!(result.render_delay, Some(CURSOR_POSITION_SETTLE));
+        assert_eq!(result.render_delay, Some(Duration::from_millis(100)));
         assert_eq!(
             pane.cursor_state()
                 .map(|cursor| (cursor.x, cursor.y, cursor.visible)),
             Some((1, 0, true))
+        );
+        // If output stops here, the scheduled repaint must be late enough to
+        // publish this cursor without relying on an unrelated later redraw.
+        let mut core = pane.core.lock().unwrap();
+        let current = current_cursor_state(&mut core);
+        assert_eq!(
+            core.cursor_settle_state
+                .reported_cursor(current, Instant::now() + result.render_delay.unwrap()),
+            current
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn cursor_settle_ignores_intermediate_synchronized_frame_positions() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        let pane_id = PaneId::from_raw(1);
+        pane.process_pty_bytes(pane_id, 0, b"\x1b[15;4H", &tx);
+
+        let previous = TerminalCursorState {
+            x: 3,
+            y: 14,
+            visible: true,
+            shape: 0,
+        };
+        {
+            let mut core = pane.core.lock().unwrap();
+            let now = Instant::now();
+            core.cursor_settle_state = CursorPositionSettleState::default();
+            core.cursor_settle_state.observe(
+                Some(TerminalCursorState { x: 2, ..previous }),
+                now - Duration::from_millis(300),
+            );
+            // Seed a pending hold whose deadline has passed, without wall-clock sleeps.
+            core.cursor_settle_state
+                .observe(Some(previous), now - Duration::from_millis(200));
+        }
+
+        for bytes in [
+            b"\x1b[?2026h\x1b[15;4Hx\x1b[13;1H".as_slice(),
+            b"\x1b[0 q\x1b[13;1H \x1b[15;5H",
+            b"\x1b[?25h",
+        ] {
+            let result = pane.process_pty_bytes(pane_id, 0, bytes, &tx);
+            assert!(!result.request_render);
+            assert_eq!(result.render_delay, None);
+            assert_eq!(pane.cursor_state(), Some(previous));
+            assert!(pane.core.lock().unwrap().cursor_settle_state.pending());
+        }
+
+        let result = pane.process_pty_bytes(pane_id, 0, b"\x1b[?2026l", &tx);
+        assert!(result.request_render);
+        assert_eq!(result.render_delay, Some(CURSOR_POSITION_SETTLE));
+        assert!(pane.core.lock().unwrap().cursor_settle_state.pending());
+        assert_eq!(pane.cursor_state(), Some(previous));
+
+        // ConPTY may restore the real caret after the synchronized frame closes.
+        let mut core = pane.core.lock().unwrap();
+        let current = current_cursor_state(&mut core);
+        assert_eq!(
+            core.cursor_settle_state
+                .reported_cursor(current, Instant::now() + CURSOR_POSITION_SETTLE),
+            Some(TerminalCursorState { x: 4, ..previous })
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn cursor_settle_preserves_final_visibility_and_shape_across_split_sync_sequences() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        let pane_id = PaneId::from_raw(1);
+        pane.process_pty_bytes(pane_id, 0, b"\x1b[15;4H", &tx);
+
+        for bytes in [
+            b"\x1b[?202".as_slice(),
+            b"6h\x1b[13;1H",
+            b"\x1b[6 q\x1b[15;5H\x1b[?25l\x1b[?20",
+        ] {
+            pane.process_pty_bytes(pane_id, 0, bytes, &tx);
+            assert!(!pane.core.lock().unwrap().cursor_settle_state.pending());
+        }
+
+        let result = pane.process_pty_bytes(pane_id, 0, b"26l", &tx);
+        assert!(result.request_render);
+        assert_eq!(result.render_delay, None);
+        assert_eq!(
+            pane.cursor_state(),
+            Some(TerminalCursorState {
+                x: 4,
+                y: 14,
+                visible: false,
+                shape: 6,
+            })
         );
     }
 
@@ -4373,19 +4476,25 @@ mod tests {
 
     #[test]
     fn cursor_settle_policy_controls_render_delay() {
+        let delay = Some(CURSOR_POSITION_SETTLE);
         assert_eq!(
-            render_delay_after_pty_write(false, false, true, true),
-            Some(CURSOR_POSITION_SETTLE)
+            render_delay_after_pty_write(false, false, delay, true),
+            delay
         );
         assert_eq!(
-            render_delay_after_pty_write(false, false, true, false),
+            render_delay_after_pty_write(false, false, delay, false),
             None
         );
         assert_eq!(
-            render_delay_after_pty_write(false, true, true, false),
+            render_delay_after_pty_write(false, true, delay, false),
             Some(KITTY_GRAPHICS_REDRAW_SETTLE)
         );
-        assert_eq!(render_delay_after_pty_write(true, false, true, true), None);
+        assert_eq!(render_delay_after_pty_write(true, false, delay, true), None);
+        let jump_delay = Some(Duration::from_millis(100));
+        assert_eq!(
+            render_delay_after_pty_write(false, true, jump_delay, true),
+            jump_delay
+        );
     }
 
     #[test]
@@ -5743,82 +5852,6 @@ mod tests {
     }
 
     #[test]
-    fn resize_clears_marked_prompt_so_shell_redraw_does_not_stack() {
-        // Replay of a live zsh + starship pane being drag-resized, reduced to
-        // the geometry and the bytes that matter.
-        //
-        // The shell answers every SIGWINCH by moving up one row, erasing to
-        // the end of the screen, and reprinting a prompt padded to the width
-        // it just read. `$fill` makes that first line exactly as wide as the
-        // pane, so the moment the pane narrows, reflow rewraps it onto two
-        // rows and the shell's one-row move-up misses the top one.
-        //
-        // Ghostty's answer is to clear the marked prompt rows before
-        // reflowing, which herdr opts into with
-        // `ghostty_terminal_set_shell_redraws_prompt`. That clear has to find
-        // the top of the prompt, and zsh emits OSC 133 A only when it prints
-        // a *new* prompt, never on a redraw -- so after the first redraw the
-        // rows carry `.prompt_continuation` and no `.prompt` anchor at all.
-        // The clear must still walk to the top of that continuation run; if
-        // it gives up and starts at the cursor row instead, every prompt row
-        // above the cursor survives and the copies stack up one per resize.
-        let path = "~/workspace/gjoffice";
-        // Starship pads the first line out to the pane width, but never
-        // narrower than the text it already holds.
-        let prompt = |cols: usize| {
-            let width = cols.max(path.len() + 2);
-            format!("{path} {}\r\n> ", " ".repeat(width - path.len() - 1))
-        };
-        let redraw = b"\r\r\x1b[A\x1b[0m\x1b[27m\x1b[24m\x1b[J";
-
-        let (tx, _rx) = mpsc::channel(4);
-        let mut terminal = crate::ghostty::Terminal::new(45, 27, 10_000).unwrap();
-        terminal.write(b"\x1b]133;A\x1b\\");
-        terminal.write(prompt(45).as_bytes());
-        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
-        // Count across the soft wraps a narrow pane introduces.
-        let copies =
-            |p: &GhosttyPaneTerminal| p.recent_text(500).replace('\n', "").matches(path).count();
-        assert_eq!(copies(&pane), 1);
-
-        // One drag in, back out, and in again, at the geometry the live pane
-        // reported. Widening past the point where the prompt no longer wraps
-        // is what strands the `.prompt` anchor.
-        for (rows, cols) in [
-            (27u16, 40u16),
-            (27, 35),
-            (27, 29),
-            (26, 26),
-            (26, 21),
-            (26, 15),
-            (26, 19),
-            (26, 24),
-            (26, 29),
-            (27, 32),
-            (27, 38),
-            (27, 43),
-            (27, 38),
-            (27, 33),
-            (27, 29),
-            (26, 25),
-            (26, 20),
-            (26, 15),
-            (26, 12),
-        ] {
-            pane.resize(rows, cols, 0, 0);
-            let mut core = pane.core.lock().unwrap();
-            core.terminal.write(redraw);
-            core.terminal.write(prompt(usize::from(cols)).as_bytes());
-        }
-
-        assert_eq!(
-            copies(&pane),
-            1,
-            "a drag-resize must leave exactly one prompt, not a stack of orphans"
-        );
-    }
-
-    #[test]
     fn repeated_resizes_never_duplicate_scrollback_history() {
         let (tx, _rx) = mpsc::channel(4);
         let mut terminal = crate::ghostty::Terminal::new(80, 24, 10_000).unwrap();
@@ -6634,56 +6667,6 @@ mod tests {
             crate::protocol::underline_style_from_modifier(cell.modifier),
             3
         );
-    }
-
-    #[test]
-    fn clear_screen_not_at_prompt_erases_all_rows_above_cursor_without_scrollback() {
-        // Regression test: before switching the not-at-prompt branch from
-        // `Screen.eraseActive` to `Screen.clearRows`, this reproduced a
-        // real bug where only a small prefix of rows above the cursor
-        // got erased -- everything past roughly the first internal page
-        // boundary survived untouched, even though nothing had ever
-        // scrolled into real history yet. Many separate incremental
-        // writes (matching real streamed pty output, e.g. an SSH login
-        // banner) are what actually grows the active area across
-        // multiple internal pages; a single batched write does not
-        // reproduce it.
-        let (tx, _rx) = mpsc::channel(4);
-        let terminal = crate::ghostty::Terminal::new(20, 25, 0).unwrap();
-        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
-        let backend = ratatui::backend::TestBackend::new(20, 25);
-        let mut rterm = ratatui::Terminal::new(backend).unwrap();
-
-        for i in 0..19 {
-            {
-                let mut core = pane.core.lock().unwrap();
-                core.terminal.write(format!("LINE{i:02}\r\n").as_bytes());
-            }
-            rterm
-                .draw(|frame| pane.render(frame, Rect::new(0, 0, 20, 25), true))
-                .unwrap();
-            let _ = pane.collect_dirty_patch(20, 25);
-        }
-        {
-            let mut core = pane.core.lock().unwrap();
-            core.terminal.write(b"PROMPT>");
-        }
-        rterm
-            .draw(|frame| pane.render(frame, Rect::new(0, 0, 20, 25), true))
-            .unwrap();
-        let _ = pane.collect_dirty_patch(20, 25);
-
-        let at_prompt = pane.clear_screen();
-        assert!(!at_prompt, "no OSC 133 markers were sent");
-
-        let text = pane.visible_text();
-        for i in 0..19 {
-            assert!(
-                !text.contains(&format!("LINE{i:02}")),
-                "LINE{i:02} should have been erased, got: {text}"
-            );
-        }
-        assert!(text.contains("PROMPT>"), "got: {text}");
     }
 
     #[test]

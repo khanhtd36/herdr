@@ -6289,11 +6289,9 @@ pub const PromptIterator = struct {
                         }
                     }
 
-                    // No prior rows, trimmed scrollback probably. The topmost
-                    // continuation we reached is the best start we have; the
-                    // starting row would skip every continuation above it.
+                    // No prior rows, trimmed scrollback probably.
                     self.current = null;
-                    return end_pin.left(end_pin.x);
+                    return p.left(p.x);
                 },
             }
         }

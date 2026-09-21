@@ -167,6 +167,22 @@ impl App {
         encode_success(id, ResponseResult::PaneInfo { pane })
     }
 
+    pub(super) fn handle_pane_clear(&mut self, id: String, target: PaneTarget) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&target.pane_id) else {
+            return pane_not_found(id, &target.pane_id);
+        };
+        let Some(runtime) =
+            self.state
+                .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)
+        else {
+            return pane_not_found(id, &target.pane_id);
+        };
+        match runtime.clear_screen() {
+            Ok(()) => encode_success(id, ResponseResult::Ok {}),
+            Err(err) => encode_error(id, "pane_clear_failed", err.to_string()),
+        }
+    }
+
     pub(super) fn handle_pane_scroll(&mut self, id: String, params: PaneScrollParams) -> String {
         let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
             return pane_not_found(id, &params.pane_id);
@@ -1948,40 +1964,6 @@ impl App {
         encode_success(id, ResponseResult::Ok {})
     }
 
-    pub(super) fn handle_pane_clear_screen(&mut self, id: String, target: PaneTarget) -> String {
-        let Some((ws_idx, pane_id)) = self.parse_pane_id(&target.pane_id) else {
-            return pane_not_found(id, &target.pane_id);
-        };
-        let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
-            return pane_not_found(id, &target.pane_id);
-        };
-        // Scrollback is always erased below, so any existing scroll
-        // offset now refers to history that no longer exists -- pin the
-        // viewport back to the live view the way every real terminal's
-        // clear does, instead of leaving it stranded at a stale offset.
-        runtime.scroll_reset();
-        // clear_screen() erases scrollback always; whether it erases the
-        // whole active screen or only rows above the cursor depends on
-        // whether the cursor was at an idle shell prompt (OSC 133),
-        // which it returns. Only that case also nudges the shell to
-        // redraw its prompt -- always false while an alternate-screen
-        // program (vim, tmux) is active, or when there's no shell
-        // integration at all. Neither branch repositions the cursor
-        // explicitly, matching real Ghostty (Termio.zig's clearScreen).
-        // In the not-at-prompt branch the prompt still reaches the top
-        // of the screen, because erasing the rows above it physically
-        // removes them and shifts it up; in the at-prompt branch the
-        // shell's own response to the form feed below does the redraw.
-        if runtime.clear_screen() {
-            // Form feed: the byte real terminals send for Ctrl+L /
-            // "clear screen", which readline/zle trap to redraw their
-            // prompt. The shell -- not herdr -- owns the prompt text
-            // and its on-screen position.
-            let _ = runtime.try_send_bytes(Bytes::from_static(&[0x0C]));
-        }
-        encode_success(id, ResponseResult::Ok {})
-    }
-
     pub(super) fn handle_pane_mark(&mut self, id: String, _params: EmptyParams) -> String {
         self.state.mark_pane();
         encode_success(id, ResponseResult::Ok {})
@@ -2422,6 +2404,26 @@ mod tests {
         assert_eq!(success.result, ResponseResult::Ok {});
         assert_eq!(rx.try_recv().unwrap(), bytes::Bytes::from_static(b"\x1b[Z"));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn api_clear_pane_mutates_endpoint_owned_history() {
+        let (mut app, public_pane_id, pane_id) = app_with_scrollback_runtime();
+        let request = crate::api::schema::Request {
+            id: "clear".into(),
+            method: crate::api::schema::Method::PaneClear(PaneTarget {
+                pane_id: public_pane_id,
+            }),
+        };
+        assert!(crate::api::request_changes_ui(&request));
+        let response = app.handle_api_request(request);
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(success.result, ResponseResult::Ok {});
+        let runtime = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap();
+        assert_eq!(runtime.scroll_metrics().unwrap().max_offset_from_bottom, 0);
     }
 
     #[tokio::test]
@@ -4634,212 +4636,5 @@ mod tests {
 
             assert_eq!(metadata_error_code(&response), "invalid_metadata_ttl");
         }
-    }
-
-    #[tokio::test]
-    async fn pane_clear_screen_erases_content_and_scrollback() {
-        let (mut app, public_pane_id) = app_with_test_workspace();
-        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
-        let runtime = crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
-            20,
-            5,
-            4096,
-            b"alpha\nbeta\n",
-        );
-        app.state.insert_test_runtime(pane_id, runtime);
-        let runtime_before = app
-            .state
-            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
-            .unwrap();
-        assert!(runtime_before.recent_unwrapped_text(10).contains("alpha"));
-
-        let response = app.handle_pane_clear_screen(
-            "req".into(),
-            PaneTarget {
-                pane_id: public_pane_id,
-            },
-        );
-
-        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
-        assert_eq!(success.id, "req");
-        assert_eq!(success.result, ResponseResult::Ok {});
-        let runtime_after = app
-            .state
-            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
-            .unwrap();
-        let text = runtime_after.recent_unwrapped_text(10);
-        assert!(!text.contains("alpha"));
-        assert!(!text.contains("beta"));
-    }
-
-    #[tokio::test]
-    async fn pane_clear_screen_resets_stale_scroll_offset() {
-        let (mut app, public_pane_id) = app_with_test_workspace();
-        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
-        let runtime = crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
-            20,
-            5,
-            4096,
-            b"one\ntwo\nthree\nfour\nfive\nsix\nseven\n",
-        );
-        // Scrollback is always erased below, so a pre-existing scroll
-        // offset now refers to history that no longer exists.
-        runtime.set_scroll_offset_from_bottom(1);
-        app.state.insert_test_runtime(pane_id, runtime);
-        let runtime_before = app
-            .state
-            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
-            .unwrap();
-        assert_eq!(
-            runtime_before.scroll_metrics().unwrap().offset_from_bottom,
-            1
-        );
-
-        app.handle_pane_clear_screen(
-            "req".into(),
-            PaneTarget {
-                pane_id: public_pane_id,
-            },
-        );
-
-        let runtime_after = app
-            .state
-            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
-            .unwrap();
-        assert_eq!(
-            runtime_after.scroll_metrics().unwrap().offset_from_bottom,
-            0
-        );
-    }
-
-    #[tokio::test]
-    async fn pane_clear_screen_at_prompt_erases_active_and_sends_form_feed() {
-        let (mut app, public_pane_id) = app_with_test_workspace();
-        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
-        let (runtime, mut written) =
-            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
-                20, 5, 4096, b"", 8,
-            );
-        // OSC 133;A marks the start of an idle shell prompt.
-        runtime.test_process_pty_bytes(b"\x1b]133;A\x07$ ");
-        let cursor_before = runtime
-            .cursor_state(ratatui::layout::Rect::new(0, 0, 20, 5), true)
-            .unwrap();
-        app.state.insert_test_runtime(pane_id, runtime);
-
-        let response = app.handle_pane_clear_screen(
-            "req".into(),
-            PaneTarget {
-                pane_id: public_pane_id,
-            },
-        );
-
-        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
-        assert_eq!(success.result, ResponseResult::Ok {});
-        let runtime_after = app
-            .state
-            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
-            .unwrap();
-        let text = runtime_after.recent_unwrapped_text(10);
-        assert!(!text.contains('$'));
-        // Cursor position is deliberately left untouched here: real
-        // Ghostty doesn't reposition it locally either, relying
-        // entirely on the shell's own response to the form feed below
-        // (zle/readline's clear-screen widget) to redraw and reposition
-        // -- repositioning locally first would fight the shell's own
-        // relative-scroll math, which computes against what it still
-        // thinks the cursor row is.
-        let cursor_after = runtime_after
-            .cursor_state(ratatui::layout::Rect::new(0, 0, 20, 5), true)
-            .unwrap();
-        assert_eq!(
-            (cursor_after.x, cursor_after.y),
-            (cursor_before.x, cursor_before.y)
-        );
-        let sent = written.try_recv().expect("form feed byte was sent");
-        assert_eq!(&sent[..], &[0x0C]);
-    }
-
-    #[tokio::test]
-    async fn pane_clear_screen_not_at_prompt_erases_only_above_cursor() {
-        let (mut app, public_pane_id) = app_with_test_workspace();
-        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
-        let (runtime, mut written) =
-            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
-                20, 5, 4096, b"", 8,
-            );
-        // No OSC 133 markers: cursor position is plain mid-output text,
-        // not a recognized idle prompt. Real Ghostty erases only rows
-        // above the cursor in this case (no shell integration to redraw
-        // a prompt afterward), rather than blanking the whole screen.
-        // No trailing newline, so the cursor sits at the end of "line
-        // two" rather than on a fresh blank row below it.
-        runtime.test_process_pty_bytes(b"line one\nline two");
-        app.state.insert_test_runtime(pane_id, runtime);
-
-        app.handle_pane_clear_screen(
-            "req".into(),
-            PaneTarget {
-                pane_id: public_pane_id,
-            },
-        );
-
-        let runtime_after = app
-            .state
-            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
-            .unwrap();
-        let text = runtime_after.recent_unwrapped_text(10);
-        assert!(!text.contains("line one"));
-        assert!(text.contains("line two"));
-        let cursor_after = runtime_after
-            .cursor_state(ratatui::layout::Rect::new(0, 0, 20, 5), true)
-            .unwrap();
-        // Rows above the cursor are physically removed and the survivors
-        // shift up, so the cursor's row lands at the top of the screen.
-        // That shift -- not any cursor repositioning of our own -- is
-        // what puts the shell's prompt back at the top left, and is why
-        // this matches real Ghostty's Cmd+K without shell integration.
-        assert_eq!((cursor_after.x, cursor_after.y), (16, 0));
-        assert!(written.try_recv().is_err());
-    }
-
-    #[tokio::test]
-    async fn pane_clear_screen_in_alt_screen_never_writes_to_pty() {
-        let (mut app, public_pane_id) = app_with_test_workspace();
-        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
-        let (runtime, mut written) =
-            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
-                20, 5, 4096, b"", 8,
-            );
-        // Enter the alternate screen (as vim/tmux would) after a prompt
-        // was marked, so any stale prompt state on the primary screen
-        // must not leak a form feed into the running program.
-        runtime.test_process_pty_bytes(b"\x1b]133;A\x07$ \x1b[?1049h");
-        assert!(runtime.alternate_screen_active());
-        app.state.insert_test_runtime(pane_id, runtime);
-
-        app.handle_pane_clear_screen(
-            "req".into(),
-            PaneTarget {
-                pane_id: public_pane_id,
-            },
-        );
-
-        assert!(written.try_recv().is_err());
-    }
-
-    #[test]
-    fn pane_clear_screen_rejects_unknown_pane() {
-        let (mut app, _public_pane_id) = app_with_test_workspace();
-
-        let response = app.handle_pane_clear_screen(
-            "req".into(),
-            PaneTarget {
-                pane_id: "does-not-exist".into(),
-            },
-        );
-
-        let error: ErrorResponse = serde_json::from_str(&response).unwrap();
-        assert_eq!(error.error.code, "pane_not_found");
     }
 }
