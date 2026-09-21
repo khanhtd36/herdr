@@ -28,12 +28,15 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "pane.input.set",
     "pane.link.activate",
     "pane.link.resolve",
+    "pane.mark",
     "pane.rename",
     "pane.resize",
     "pane.scroll",
     "pane.selection.read",
     "pane.split",
     "pane.swap",
+    "pane.swap_marked",
+    "pane.unmark",
     "pane.zoom",
     "product_announcement.dismiss",
     "release_notes.dismiss",
@@ -296,6 +299,18 @@ mod tests {
         assert_eq!(
             actual.remove("pane.link.resolve").as_deref(),
             Some("f5e4a3e01453ae7b188f127ce951c12c20e0bebcc17cc364eeb6d1a01fd5bf81")
+        );
+        assert_eq!(
+            actual.remove("pane.mark").as_deref(),
+            Some("4f17eaffbc0f468c7246ee0b431e684a64b3a0da7ee97a478d5b4dd52656b7e4")
+        );
+        assert_eq!(
+            actual.remove("pane.swap_marked").as_deref(),
+            Some("5467c46fb32e9920633385fee8a687757bdde2a3d786552360ccee5575a42a01")
+        );
+        assert_eq!(
+            actual.remove("pane.unmark").as_deref(),
+            Some("a95f7758f2d30998f3738f930e1ad49d1c97f92b9374966321dd7232768d4527")
         );
 
         assert_eq!(
