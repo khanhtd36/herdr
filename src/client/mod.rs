@@ -1184,6 +1184,7 @@ async fn run_client_loop(
                     }
                     let unavailable = state.shell.as_mut().and_then(|shell| {
                         shell.set_endpoint_status(&endpoint_id, status);
+                        shell.set_machine_diagnostic(&endpoint_id, message.clone());
                         (status == endpoint::ClientEndpointStatus::Attention
                             && shell.endpoint_is_active(&endpoint_id))
                         .then(|| format!("{}: {message}", shell.endpoint_label(&endpoint_id)))
@@ -1906,6 +1907,16 @@ async fn run_client_loop(
                             )) => {
                                 if let Some(shell) = state.shell.as_mut() {
                                     shell.set_endpoint_agent_view_projection_for_generation(
+                                        &endpoint_id,
+                                        generation,
+                                        projection,
+                                    );
+                                }
+                                continue;
+                            }
+                            Ok(endpoint::EndpointControlMessage::AgentCompletions(projection)) => {
+                                if let Some(shell) = state.shell.as_mut() {
+                                    shell.set_endpoint_agent_completions(
                                         &endpoint_id,
                                         generation,
                                         projection,

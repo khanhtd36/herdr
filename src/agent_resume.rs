@@ -25,7 +25,7 @@ pub const RESUMABLE_AGENT_IDS: &[&str] = &[
     "cursor",
 ];
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSessionRef {
     pub kind: AgentSessionRefKind,
     pub value: String,

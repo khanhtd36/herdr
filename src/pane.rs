@@ -34,7 +34,7 @@ mod terminal;
 mod xtgettcap;
 
 use self::agent_detection::{
-    decide_detection_screen_read, decide_screen_detection_publish,
+    codex_prompt_ready, decide_detection_screen_read, decide_screen_detection_publish,
     detection_update_for_publish_with_osc, mark_detection_content_changed,
     observe_detection_content_change, DetectionPublishDecision, DetectionScreenReadDecision,
     DetectionScreenReadInput, PendingIdleConfirmation, ScreenDetectionPublishInput,
@@ -96,7 +96,25 @@ fn apply_pane_terminal_env(cmd: &mut CommandBuilder) {
     // when the remote side lacks matching terminfo entries.
     cmd.env("TERM", PANE_TERM);
     cmd.env("COLORTERM", PANE_COLORTERM);
-    cmd.env_remove("WT_SESSION");
+    cmd.env("TERM_PROGRAM", "herdr");
+    cmd.env("TERM_PROGRAM_VERSION", crate::build_info::version());
+    // Host handles refer to the outer terminal, never to this pane.
+    for key in [
+        "ITERM_SESSION_ID",
+        "LC_TERMINAL",
+        "LC_TERMINAL_VERSION",
+        "WEZTERM_PANE",
+        "KITTY_WINDOW_ID",
+        "WT_SESSION",
+        "TMUX",
+        "TMUX_PANE",
+        "STY",
+        "ZELLIJ",
+        "ZELLIJ_SESSION_NAME",
+        "ZELLIJ_PANE_ID",
+    ] {
+        cmd.env_remove(key);
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -146,10 +164,20 @@ impl PaneLaunchEnv {
 }
 
 fn apply_pane_launch_env(cmd: &mut CommandBuilder, launch_env: &PaneLaunchEnv) {
-    cmd.env_remove("CODEX_THREAD_ID");
-    // OMP sets OMPCODE for shells it spawns. A pane launched from inside OMP
-    // must not inherit it or its root agent would look like a nested session.
-    cmd.env_remove("OMPCODE");
+    #[cfg(unix)]
+    crate::platform::ssh_agent::apply_pane_env(cmd);
+    // A new pane is not a child agent of the process that started the server.
+    // Explicit launch env below can opt back into an intentional child session.
+    for key in [
+        "CODEX_THREAD_ID",
+        "OMPCODE",
+        "CLAUDECODE",
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+    ] {
+        cmd.env_remove(key);
+    }
     for (key, value) in &launch_env.extra {
         cmd.env(key, value);
     }
@@ -259,6 +287,31 @@ async fn publish_agent_process_detected_event(
             err = %e,
             "failed to deliver AgentProcessDetected event"
         );
+    }
+}
+
+async fn publish_codex_prompt_observation(
+    state_events: &mpsc::Sender<AppEvent>,
+    pane_id: PaneId,
+    agent: Option<Agent>,
+    content: &str,
+    detection: Option<&crate::detect::AgentDetection>,
+    process_exited: bool,
+    last_ready: &mut bool,
+) {
+    let ready = agent == Some(Agent::Codex)
+        && !process_exited
+        && detection.is_some_and(|detection| detection.state == AgentState::Unknown)
+        && codex_prompt_ready(content);
+    if ready == *last_ready {
+        return;
+    }
+    *last_ready = ready;
+    if let Err(err) = state_events
+        .send(AppEvent::CodexPromptObserved { pane_id, ready })
+        .await
+    {
+        warn!(pane = pane_id.raw(), %err, "failed to deliver Codex prompt observation");
     }
 }
 
@@ -744,6 +797,7 @@ fn spawn_basic_detection_task(
         let mut agent_startup_grace_until = None;
         let mut pending_idle = PendingIdleConfirmation::default();
         let mut was_detect_enabled = true;
+        let mut last_codex_prompt_ready = false;
 
         loop {
             let sleep_duration = if pending_idle.active() {
@@ -754,6 +808,10 @@ fn spawn_basic_detection_task(
             tokio::select! {
                 _ = tokio::time::sleep(sleep_duration) => {}
                 _ = detect_reset.notified() => {
+                    publish_codex_prompt_observation(
+                        &state_events, pane_id, Some(Agent::Codex), "", None, false,
+                        &mut last_codex_prompt_ready,
+                    ).await;
                     agent_presence = AgentDetectionPresence::from_agent(None);
                     state = AgentState::Unknown;
                     last_visible_idle = false;
@@ -898,6 +956,7 @@ fn spawn_basic_detection_task(
                             == ForegroundShellAgentAction::ReportReplacementProcess;
                     if agent_changed {
                         pending_idle.clear();
+                        last_codex_prompt_ready = false;
                         last_screen_scan_detection_content_seq = None;
                         // A replacement agent must not inherit OSC evidence
                         // from the previous process; a first acquisition keeps
@@ -971,10 +1030,29 @@ fn spawn_basic_detection_task(
             last_screen_scan_detection_content_seq = current_detection_content_seq;
             let content_changed = content != last_detection_text;
             last_detection_text.clone_from(&content);
-            if !process_exited && crate::detect::should_skip_state_update(agent, &content) {
+            let osc_title = terminal.agent_osc_title();
+            let osc_progress = terminal.agent_osc_progress();
+            let screen_detection = detection_update_for_publish_with_osc(
+                agent,
+                &content,
+                &osc_title,
+                &osc_progress,
+                process_exited,
+            );
+            publish_codex_prompt_observation(
+                &state_events,
+                pane_id,
+                agent,
+                &content,
+                screen_detection.as_ref(),
+                process_exited,
+                &mut last_codex_prompt_ready,
+            )
+            .await;
+            let Some(screen_detection) = screen_detection else {
                 pending_idle.clear();
                 continue;
-            }
+            };
             sync_content_change_acquisition(
                 agent_presence.current_agent(),
                 suppressed_agent,
@@ -984,19 +1062,6 @@ fn spawn_basic_detection_task(
                 &mut acquisition_started_at,
                 &mut last_content_change_at,
             );
-
-            let osc_title = terminal.agent_osc_title();
-            let osc_progress = terminal.agent_osc_progress();
-            let Some(screen_detection) = detection_update_for_publish_with_osc(
-                agent,
-                &content,
-                &osc_title,
-                &osc_progress,
-                process_exited,
-            ) else {
-                pending_idle.clear();
-                continue;
-            };
             match decide_screen_detection_publish(
                 ScreenDetectionPublishInput {
                     screen_detection,
@@ -2188,6 +2253,7 @@ impl PaneRuntime {
             input_state: self.input_state(),
             terminal_title: self.terminal_title(),
             initial_history_ansi: None,
+            agent_state: None,
         }
     }
 
@@ -2398,6 +2464,7 @@ impl PaneRuntime {
             input_state,
             terminal_title,
             initial_history_ansi,
+            agent_state: _,
         } = state;
         let pane_id = PaneId::from_raw(pane_id);
         use std::os::fd::FromRawFd;
@@ -2759,6 +2826,7 @@ impl PaneRuntime {
                 let mut agent_startup_grace_until = None;
                 let mut pending_idle = PendingIdleConfirmation::default();
                 let mut was_detect_enabled = true;
+                let mut last_codex_prompt_ready = false;
 
                 tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -2779,6 +2847,10 @@ impl PaneRuntime {
                     tokio::select! {
                         _ = tokio::time::sleep(tick) => {}
                         _ = detect_reset.notified() => {
+                            publish_codex_prompt_observation(
+                                &state_events, pane_id, Some(Agent::Codex), "", None, false,
+                                &mut last_codex_prompt_ready,
+                            ).await;
                             agent_presence = AgentDetectionPresence::from_agent(None);
                             state = AgentState::Unknown;
                             last_visible_idle = false;
@@ -2959,6 +3031,7 @@ impl PaneRuntime {
                                         == ForegroundShellAgentAction::ReportReplacementProcess
                                 {
                                     pending_idle.clear();
+                                    last_codex_prompt_ready = false;
                                     last_screen_scan_detection_content_seq = None;
                                     // A replacement agent must not inherit OSC
                                     // evidence from the previous process; a first
@@ -3066,10 +3139,29 @@ impl PaneRuntime {
                     last_screen_scan_detection_content_seq = current_detection_content_seq;
                     let content_changed = content != last_detection_text;
                     last_detection_text.clone_from(&content);
-                    if detect::should_skip_state_update(agent, &content) {
+                    let osc_title = terminal.agent_osc_title();
+                    let osc_progress = terminal.agent_osc_progress();
+                    let screen_detection = detection_update_for_publish_with_osc(
+                        agent,
+                        &content,
+                        &osc_title,
+                        &osc_progress,
+                        process_exited,
+                    );
+                    publish_codex_prompt_observation(
+                        &state_events,
+                        pane_id,
+                        agent,
+                        &content,
+                        screen_detection.as_ref(),
+                        process_exited,
+                        &mut last_codex_prompt_ready,
+                    )
+                    .await;
+                    let Some(screen_detection) = screen_detection else {
                         pending_idle.clear();
                         continue;
-                    }
+                    };
                     sync_content_change_acquisition(
                         agent_presence.current_agent(),
                         suppressed_agent,
@@ -3079,19 +3171,6 @@ impl PaneRuntime {
                         &mut acquisition_started_at,
                         &mut last_content_change_at,
                     );
-
-                    let osc_title = terminal.agent_osc_title();
-                    let osc_progress = terminal.agent_osc_progress();
-                    let Some(screen_detection) = detection_update_for_publish_with_osc(
-                        agent,
-                        &content,
-                        &osc_title,
-                        &osc_progress,
-                        process_exited,
-                    ) else {
-                        pending_idle.clear();
-                        continue;
-                    };
                     match decide_screen_detection_publish(
                         ScreenDetectionPublishInput {
                             screen_detection,
@@ -3386,6 +3465,10 @@ impl PaneRuntime {
 
     pub fn synchronized_output_active(&self) -> bool {
         self.terminal.synchronized_output_active()
+    }
+
+    pub(crate) fn synchronized_output_state(&self) -> (bool, u64) {
+        self.terminal.synchronized_output_state()
     }
 
     pub fn visible_text(&self) -> String {
@@ -3900,6 +3983,7 @@ impl PaneRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
 
     #[tokio::test]
     async fn clear_pane_preserves_wrapped_input_and_unfinished_vt_sequence() {
@@ -4009,33 +4093,84 @@ mod tests {
     }
 
     #[test]
-    fn pane_launch_env_removes_outer_codex_thread_id() {
+    fn pane_launch_env_removes_outer_agent_identity() {
+        let keys = [
+            "CODEX_THREAD_ID",
+            "OMPCODE",
+            "CLAUDECODE",
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_MESSAGING_TOKEN",
+        ];
         let mut cmd = CommandBuilder::new("shell");
-        cmd.env("CODEX_THREAD_ID", "outer-session");
+        for key in keys {
+            cmd.env(key, "outer-session");
+        }
+        cmd.env("ANTHROPIC_API_KEY", "fake-api-key");
+        cmd.env("DISPLAY", ":42");
 
         apply_pane_launch_env(&mut cmd, &PaneLaunchEnv::default());
 
-        assert!(cmd.get_env("CODEX_THREAD_ID").is_none());
+        for key in keys {
+            assert!(cmd.get_env(key).is_none(), "{key} must not leak into panes");
+        }
+        assert_eq!(
+            cmd.get_env("ANTHROPIC_API_KEY"),
+            Some(OsStr::new("fake-api-key"))
+        );
+        assert_eq!(cmd.get_env("DISPLAY"), Some(OsStr::new(":42")));
     }
 
     #[test]
-    fn pane_launch_env_removes_outer_ompcode_marker() {
+    fn pane_terminal_identity_removes_outer_terminal_identity() {
+        let keys = [
+            "ITERM_SESSION_ID",
+            "LC_TERMINAL",
+            "LC_TERMINAL_VERSION",
+            "WEZTERM_PANE",
+            "KITTY_WINDOW_ID",
+            "WT_SESSION",
+            "TMUX",
+            "TMUX_PANE",
+            "STY",
+            "ZELLIJ",
+            "ZELLIJ_SESSION_NAME",
+            "ZELLIJ_PANE_ID",
+        ];
         let mut cmd = CommandBuilder::new("shell");
-        cmd.env("OMPCODE", "1");
-
-        apply_pane_launch_env(&mut cmd, &PaneLaunchEnv::default());
-
-        assert!(cmd.get_env("OMPCODE").is_none());
-    }
-
-    #[test]
-    fn pane_terminal_identity_removes_outer_windows_terminal_session() {
-        let mut cmd = CommandBuilder::new("shell");
-        cmd.env("WT_SESSION", "outer-session");
+        for key in keys {
+            cmd.env(key, "outer-session");
+        }
+        cmd.env("TERM_PROGRAM", "iTerm.app");
+        cmd.env("TERM_PROGRAM_VERSION", "outer-version");
 
         apply_pane_terminal_env(&mut cmd);
 
-        assert!(cmd.get_env("WT_SESSION").is_none());
+        for key in keys {
+            assert!(cmd.get_env(key).is_none(), "{key} must not leak into panes");
+        }
+        assert_eq!(cmd.get_env("TERM_PROGRAM"), Some(OsStr::new("herdr")));
+        assert_eq!(
+            cmd.get_env("TERM_PROGRAM_VERSION"),
+            Some(OsStr::new(&crate::build_info::version()))
+        );
+    }
+
+    #[test]
+    fn pane_launch_env_allows_explicit_session_identity() {
+        let extra = vec![
+            ("CLAUDE_CODE_CHILD_SESSION".into(), "1".into()),
+            ("CLAUDE_CODE_SESSION_ID".into(), "intentional-child".into()),
+            ("CLAUDE_CODE_MESSAGING_TOKEN".into(), "fake-token".into()),
+            ("ITERM_SESSION_ID".into(), "intentional-host".into()),
+        ];
+        let mut cmd = CommandBuilder::new("shell");
+        apply_pane_terminal_env(&mut cmd);
+        apply_pane_launch_env(&mut cmd, &PaneLaunchEnv::from_extra(extra.clone()));
+
+        for (key, value) in extra {
+            assert_eq!(cmd.get_env(key), Some(OsStr::new(&value)));
+        }
     }
 
     #[tokio::test]
@@ -5945,5 +6080,105 @@ mod tests {
             .expect("should settle and fire once fresh shell output arrives")
             .expect("sender still alive");
         assert_eq!(received, Bytes::from_static(b"typed\r"));
+    }
+
+    #[tokio::test]
+    async fn codex_prompt_observation_revokes_on_working_or_skipped_screen() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let pane_id = PaneId::from_raw(42);
+        let detection = crate::detect::AgentDetection {
+            state: AgentState::Unknown,
+            skip_state_update: false,
+            visible_idle: false,
+            visible_blocker: false,
+            visible_working: false,
+        };
+        let mut last_ready = false;
+        let prompt = "› Ask Codex to do anything";
+        publish_codex_prompt_observation(
+            &tx,
+            pane_id,
+            Some(Agent::Codex),
+            prompt,
+            Some(&detection),
+            false,
+            &mut last_ready,
+        )
+        .await;
+        assert!(matches!(
+            rx.recv().await,
+            Some(AppEvent::CodexPromptObserved { ready: true, .. })
+        ));
+        publish_codex_prompt_observation(
+            &tx,
+            pane_id,
+            Some(Agent::Codex),
+            prompt,
+            Some(&detection),
+            false,
+            &mut last_ready,
+        )
+        .await;
+        assert!(rx.try_recv().is_err());
+        let working = crate::detect::AgentDetection {
+            state: AgentState::Working,
+            ..detection
+        };
+        publish_codex_prompt_observation(
+            &tx,
+            pane_id,
+            Some(Agent::Codex),
+            prompt,
+            Some(&working),
+            false,
+            &mut last_ready,
+        )
+        .await;
+        assert!(matches!(
+            rx.recv().await,
+            Some(AppEvent::CodexPromptObserved { ready: false, .. })
+        ));
+        publish_codex_prompt_observation(
+            &tx,
+            pane_id,
+            Some(Agent::Codex),
+            prompt,
+            Some(&detection),
+            false,
+            &mut last_ready,
+        )
+        .await;
+        assert!(matches!(
+            rx.recv().await,
+            Some(AppEvent::CodexPromptObserved { ready: true, .. })
+        ));
+        publish_codex_prompt_observation(
+            &tx,
+            pane_id,
+            Some(Agent::Codex),
+            prompt,
+            None,
+            false,
+            &mut last_ready,
+        )
+        .await;
+        assert!(matches!(
+            rx.recv().await,
+            Some(AppEvent::CodexPromptObserved { ready: false, .. })
+        ));
+        publish_codex_prompt_observation(
+            &tx,
+            pane_id,
+            Some(Agent::Codex),
+            prompt,
+            Some(&detection),
+            false,
+            &mut last_ready,
+        )
+        .await;
+        assert!(matches!(
+            rx.recv().await,
+            Some(AppEvent::CodexPromptObserved { ready: true, .. })
+        ));
     }
 }

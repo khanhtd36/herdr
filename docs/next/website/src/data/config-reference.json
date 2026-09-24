@@ -1494,6 +1494,12 @@
           "type": "boolean",
           "default": "false",
           "description": "Rerun the foreground command a non-agent pane was running (e.g. a TUI like lazygit) when restoring a Herdr session, by feeding the exact command line it last ran into a freshly spawned shell. Only applies when the pane was still running that command and no agent-resume match took priority."
+        },
+        {
+          "key": "session.startup_per_agent_delay_ms",
+          "type": "integer",
+          "default": "100",
+          "description": "Milliseconds between automatic agent restores after a server restart. The first agent starts without this delay; 0 disables spacing. Does not delay manual launches or explicit terminal attaches. Restart the server to apply."
         }
       ]
     },

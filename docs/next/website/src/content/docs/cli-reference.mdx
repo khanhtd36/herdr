@@ -64,7 +64,7 @@ By default, `machine add` uses the remote default session. Add `--remote-session
 
 Changes apply automatically to open local Herdr clients, normally within a second. Added or enabled machines connect in the background; renaming does not reconnect. Removing or disabling disconnects only that machine and leaves its remote sessions running. Removing the machine you are viewing returns to Local, or shows Local as unavailable until it reconnects. Each profile stores an opaque ID, label, SSH target, explicit remote session, and enabled state in client state. Herdr does not store passwords, private keys, or other SSH credentials.
 
-Automatic connections and reconnects are non-interactive. If a host key, password, key passphrase, MFA step, install, update, or restart needs approval, the machine shows Attention instead of opening a hidden prompt. Run the standalone command printed by Herdr, such as `herdr --remote workbox`, to complete that setup in the foreground, then restart the client. Include `--session <name>` only when the profile targets a named session.
+Use `herdr machine status [<label-or-id>] [--json]` for fresh, noninteractive SSH and remote Herdr checks. `reachable` describes this check, not a TUI's current connection. Use `herdr machine reconnect <label-or-id>` in a terminal for SSH authentication and verification; it does not install or update Herdr. Open clients retry failed connections within 30 seconds. Clicking `! auth` or `! error` shows the latest error and CLI guidance; collapsed sidebars show `!`. See [Recovering SSH authentication](/docs/connecting-machines/#recovering-ssh-authentication) for platform limits. For remote setup, use `herdr --remote workbox`, adding `--session <name>` only for a named session.
 
 Workspace, tab, pane IDs, and agent names belong to a single server. Selecting a machine in the UI does not retarget CLI commands. Use the global **prefix** `--machine <label-or-id>` to route API commands to a saved SSH machine:
 
@@ -516,6 +516,17 @@ cells or percentages such as `80%`; omitted dimensions default to half the
 terminal size, and values smaller than the popup minimum are clamped. A popup
 is not a Herdr pane, does not export `HERDR_PANE_ID`, and does not participate
 in pane or agent APIs. Native non-terminal plugin panes are outside plugin v1.
+
+New panes identify as `TERM_PROGRAM=herdr`, with `TERM_PROGRAM_VERSION` set to
+Herdr's version. They keep `TERM=xterm-256color` and `COLORTERM=truecolor`.
+Herdr removes inherited outer-terminal session markers (iTerm2, WezTerm, Kitty,
+Windows Terminal, tmux, screen, and Zellij), iTerm2's `LC_TERMINAL` identity,
+and known Claude Code, Codex, and OMP session markers before applying explicit
+launch environment values. This prevents new panes from claiming the terminal
+or agent session that originally started the server. Ordinary environment
+variables, including API keys and display settings, remain inherited rather than
+being replaced with the attaching client's environment. SSH-agent forwarding has
+its own reconnect handling. Existing pane processes are unchanged by this cleanup.
 
 `--env KEY=VALUE` can be repeated on process-launching commands. It applies to the newly launched process only. Herdr-managed variables such as `HERDR_SOCKET_PATH`, `HERDR_BIN_PATH`, `HERDR_ENV`, `HERDR_WORKSPACE_ID`, `HERDR_TAB_ID`, `HERDR_PANE_ID`, `HERDR_PLUGIN_ID`, `HERDR_PLUGIN_ROOT`, `HERDR_PLUGIN_CONFIG_DIR`, `HERDR_PLUGIN_STATE_DIR`, `HERDR_PLUGIN_ENTRYPOINT_ID`, and `HERDR_PLUGIN_CONTEXT_JSON` stay authoritative when they conflict with caller-provided env.
 
