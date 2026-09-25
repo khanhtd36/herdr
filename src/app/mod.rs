@@ -2357,6 +2357,22 @@ mod tests {
                 },
             ),
         };
+        let pane_mark = crate::api::schema::Request {
+            id: "req_13".into(),
+            method: crate::api::schema::Method::PaneMark(crate::api::schema::EmptyParams::default()),
+        };
+        let pane_unmark = crate::api::schema::Request {
+            id: "req_14".into(),
+            method: crate::api::schema::Method::PaneUnmark(
+                crate::api::schema::EmptyParams::default(),
+            ),
+        };
+        let pane_swap_marked = crate::api::schema::Request {
+            id: "req_15".into(),
+            method: crate::api::schema::Method::PaneSwapMarked(
+                crate::api::schema::EmptyParams::default(),
+            ),
+        };
 
         assert!(!crate::api::request_changes_ui(&read_only));
         assert!(!crate::api::request_changes_ui(&worktree_list));
@@ -2370,6 +2386,12 @@ mod tests {
         assert!(crate::api::request_changes_ui(&command_invoke));
         assert!(crate::api::request_changes_ui(&announcement_dismiss));
         assert!(crate::api::request_changes_ui(&release_notes_dismiss));
+        // Marking/unmarking a pane changes the rendered border color (mauve
+        // when armed) even though it touches no other visible state, so it
+        // must trigger an immediate render like the swap it arms.
+        assert!(crate::api::request_changes_ui(&pane_mark));
+        assert!(crate::api::request_changes_ui(&pane_unmark));
+        assert!(crate::api::request_changes_ui(&pane_swap_marked));
     }
 
     #[test]
