@@ -2275,6 +2275,13 @@ impl GhosttyPaneTerminal {
                     .ok()
             })
             .unwrap_or_default()
+            .into_iter()
+            .map(|region| crate::api::schema::PaneLinkRegion {
+                row: region.row,
+                start_col: region.start_col,
+                end_col: region.end_col,
+            })
+            .collect()
     }
 
     pub(crate) fn link_target_at(&self, col: u16, row: u16) -> Option<crate::ghostty::LinkTarget> {
@@ -2924,12 +2931,12 @@ fn ghostty_recent_text_for_terminal(
     terminal: &crate::ghostty::Terminal,
     lines: usize,
 ) -> Result<String, crate::ghostty::Error> {
-    let Some((start, end, cols)) = ghostty_recent_read_range(terminal, lines)? else {
+    let Some((start, end, _)) = ghostty_recent_read_range(terminal, lines)? else {
         return Ok(String::new());
     };
     let mut rows = Vec::with_capacity(end.saturating_sub(start).saturating_add(1));
     for y in start..=end {
-        rows.push(ghostty_screen_row(terminal, cols, y as u32)?);
+        rows.push(ghostty_screen_row(terminal, y as u32)?);
     }
     trim_trailing_blank_rows(&mut rows);
     Ok(recent_text_from_rows(&rows, lines))
@@ -2991,10 +2998,7 @@ fn ghostty_recent_read_range(
         .min(total_rows.saturating_sub(1));
     let mut last_content_row = None;
     for row in (viewport_start..total_rows).rev() {
-        if !ghostty_screen_row(terminal, cols, row as u32)?
-            .trim()
-            .is_empty()
-        {
+        if !ghostty_screen_row(terminal, row as u32)?.trim().is_empty() {
             last_content_row = Some(row);
             break;
         }
@@ -3034,12 +3038,15 @@ fn ghostty_extract_selection(
 
 fn ghostty_screen_row(
     terminal: &crate::ghostty::Terminal,
-    cols: u16,
     y: u32,
 ) -> Result<String, crate::ghostty::Error> {
     let mut line = String::new();
-    for x in 0..cols {
-        let (wide, graphemes) = terminal.screen_cell(x, y)?;
+    // Resolve the scrollback page once per row rather than once per column.
+    for crate::ghostty::ScreenTextCell { wide, graphemes } in terminal
+        .screen_text_rows_range(y as usize, y as usize + 1)?
+        .into_iter()
+        .flat_map(|row| row.cells)
+    {
         if wide == crate::ghostty::CellWide::SpacerTail {
             continue;
         }
@@ -4937,7 +4944,7 @@ mod tests {
         let encoded = pane.encode_terminal_key(
             crate::input::TerminalKey::new(
                 crossterm::event::KeyCode::Char('a'),
-                crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT,
+                crossterm::event::KeyModifiers::CONTROL,
             ),
             crate::input::KeyboardProtocol::Legacy,
         );
@@ -5783,6 +5790,20 @@ mod tests {
         assert_eq!(pane.recent_text(3), "日本語テスト ABC 123\n");
         assert_eq!(pane.recent_unwrapped_text(3), "日本語テスト ABC 123");
         assert_eq!(pane.detection_text(), "日本語テスト ABC 123\n");
+    }
+
+    #[test]
+    fn recent_rows_preserve_combining_text_and_hide_image_placeholders() {
+        let (tx, _rx) = mpsc::channel(4);
+        let mut terminal = crate::ghostty::Terminal::new(40, 3, 1024 * 1024).unwrap();
+        terminal.write("old\r\n".repeat(100).as_bytes());
+        terminal.write("界 e\u{301} \u{10eeee} tail  ".as_bytes());
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+        assert_eq!(pane.recent_text(1), "界 e\u{301}   tail\n");
+        let detection = pane.detection_text();
+        assert_eq!(detection, "old\nold\n界 e\u{301}   tail\n");
+        pane.set_scroll_offset_from_bottom(100);
+        assert_eq!(pane.detection_text(), detection);
     }
 
     #[test]
