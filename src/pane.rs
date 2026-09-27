@@ -14,7 +14,6 @@ use ratatui::{layout::Rect, Frame};
 #[cfg(test)]
 use tokio::sync::watch;
 use tokio::sync::{mpsc, Notify};
-#[cfg(not(windows))]
 use tracing::debug;
 use tracing::{error, info, warn};
 
