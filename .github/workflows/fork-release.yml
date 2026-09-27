@@ -93,7 +93,7 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
-          targets: aarch64-apple-darwin
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Restore Homebrew Zig cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -115,17 +115,28 @@ jobs:
       - name: Remove Zig caches
         run: rm -rf .zig-cache vendor/libghostty-vt/.zig-cache vendor/libghostty-vt/zig-out
 
-      - name: Build
+      - name: Build (aarch64)
         run: cargo build --release --locked --target aarch64-apple-darwin
 
-      - name: Rename binary
-        run: cp target/aarch64-apple-darwin/release/herdr herdr-macos-aarch64
+      - name: Build (x86_64, cross-compiled)
+        run: cargo build --release --locked --target x86_64-apple-darwin
 
-      - name: Upload artifact
+      - name: Rename binaries
+        run: |
+          cp target/aarch64-apple-darwin/release/herdr herdr-macos-aarch64
+          cp target/x86_64-apple-darwin/release/herdr herdr-macos-x86_64
+
+      - name: Upload aarch64 artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: herdr-macos-aarch64
           path: herdr-macos-aarch64
+
+      - name: Upload x86_64 artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: herdr-macos-x86_64
+          path: herdr-macos-x86_64
 
   build-windows:
     needs: verify-version
@@ -177,7 +188,10 @@ jobs:
       actions: write
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ github.ref_name }}
       windows_asset_url: ${{ steps.urls.outputs.windows_asset_url }}
+      macos_aarch64_sha256: ${{ steps.shas.outputs.macos_aarch64_sha256 }}
+      macos_x86_64_sha256: ${{ steps.shas.outputs.macos_x86_64_sha256 }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -202,6 +216,7 @@ jobs:
           files: |
             herdr-linux-x86_64/herdr-linux-x86_64
             herdr-macos-aarch64/herdr-macos-aarch64
+            herdr-macos-x86_64/herdr-macos-x86_64
             herdr-windows-x86_64/herdr-windows-x86_64.exe
 
       - name: Resolve asset URLs
@@ -210,6 +225,19 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           echo "windows_asset_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/herdr-windows-x86_64.exe" >> "$GITHUB_OUTPUT"
 
+      - name: Compute asset checksums
+        id: shas
+        run: |
+          set -euo pipefail
+          linux_sha="$(sha256sum herdr-linux-x86_64/herdr-linux-x86_64 | awk '{print $1}')"
+          macos_aarch64_sha="$(sha256sum herdr-macos-aarch64/herdr-macos-aarch64 | awk '{print $1}')"
+          macos_x86_64_sha="$(sha256sum herdr-macos-x86_64/herdr-macos-x86_64 | awk '{print $1}')"
+          windows_sha="$(sha256sum herdr-windows-x86_64/herdr-windows-x86_64.exe | awk '{print $1}')"
+          echo "linux_sha256=${linux_sha}" >> "$GITHUB_OUTPUT"
+          echo "macos_aarch64_sha256=${macos_aarch64_sha}" >> "$GITHUB_OUTPUT"
+          echo "macos_x86_64_sha256=${macos_x86_64_sha}" >> "$GITHUB_OUTPUT"
+          echo "windows_sha256=${windows_sha}" >> "$GITHUB_OUTPUT"
+
       # NOTE: "protocol" below is hardcoded to the wire protocol version this
       # fork last synced from upstream (see src/protocol/wire.rs::PROTOCOL_VERSION).
       # Bump it here when that constant changes.
@@ -217,26 +245,29 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ github.ref_name }}
+          LINUX_SHA: ${{ steps.shas.outputs.linux_sha256 }}
+          MACOS_AARCH64_SHA: ${{ steps.shas.outputs.macos_aarch64_sha256 }}
+          MACOS_X86_64_SHA: ${{ steps.shas.outputs.macos_x86_64_sha256 }}
+          WINDOWS_SHA: ${{ steps.shas.outputs.windows_sha256 }}
         run: |
           set -euo pipefail
           BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
-          linux_sha="$(sha256sum herdr-linux-x86_64/herdr-linux-x86_64 | awk '{print $1}')"
-          macos_sha="$(sha256sum herdr-macos-aarch64/herdr-macos-aarch64 | awk '{print $1}')"
-          windows_sha="$(sha256sum herdr-windows-x86_64/herdr-windows-x86_64.exe | awk '{print $1}')"
-          python3 - "$VERSION" "$BASE_URL" "$linux_sha" "$macos_sha" "$windows_sha" <<'PYEOF'
+          python3 - "$VERSION" "$BASE_URL" "$LINUX_SHA" "$MACOS_AARCH64_SHA" "$MACOS_X86_64_SHA" "$WINDOWS_SHA" <<'PYEOF'
           import json
           import sys
 
-          version, base_url, linux_sha, macos_sha, windows_sha = sys.argv[1:6]
+          version, base_url, linux_sha, macos_aarch64_sha, macos_x86_64_sha, windows_sha = sys.argv[1:7]
           notes = f"See https://github.com/khanhtd36/herdr/releases/tag/fork-v{version} for release notes."
           assets = {
               "linux-x86_64": f"{base_url}/herdr-linux-x86_64",
               "macos-aarch64": f"{base_url}/herdr-macos-aarch64",
+              "macos-x86_64": f"{base_url}/herdr-macos-x86_64",
               "windows-x86_64": f"{base_url}/herdr-windows-x86_64.exe",
           }
           sha256 = {
               "linux-x86_64": linux_sha,
-              "macos-aarch64": macos_sha,
+              "macos-aarch64": macos_aarch64_sha,
+              "macos-x86_64": macos_x86_64_sha,
               "windows-x86_64": windows_sha,
           }
           manifest = {
@@ -300,3 +331,47 @@ jobs:
             --urls "${{ needs.release.outputs.windows_asset_url }}" `
             --submit `
             --token "$env:WINGET_TOKEN"
+
+  homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tap
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: khanhtd36/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Bump formula
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          TAG: ${{ needs.release.outputs.tag }}
+          AARCH64_SHA: ${{ needs.release.outputs.macos_aarch64_sha256 }}
+          X86_64_SHA: ${{ needs.release.outputs.macos_x86_64_sha256 }}
+        run: |
+          set -euo pipefail
+          formula=Formula/herdr-khanhtd36.rb
+          sed -i \
+            -e "s|version \".*\"|version \"${VERSION}\"|" \
+            -e "s|releases/download/fork-v[^/]*/herdr-macos-aarch64|releases/download/${TAG}/herdr-macos-aarch64|" \
+            -e "s|releases/download/fork-v[^/]*/herdr-macos-x86_64|releases/download/${TAG}/herdr-macos-x86_64|" \
+            "$formula"
+          # Replace the sha256 that follows each url line, matched by
+          # arch-specific context since the two shas would otherwise be
+          # indistinguishable to a blind substitution.
+          awk -v arm="$AARCH64_SHA" -v amd="$X86_64_SHA" '
+            /herdr-macos-aarch64"/ { arch = "arm" }
+            /herdr-macos-x86_64"/ { arch = "amd" }
+            /sha256/ && arch == "arm" { sub(/sha256 ".*"/, "sha256 \"" arm "\""); arch = "" }
+            /sha256/ && arch == "amd" { sub(/sha256 ".*"/, "sha256 \"" amd "\""); arch = "" }
+            { print }
+          ' "$formula" > "$formula.tmp"
+          mv "$formula.tmp" "$formula"
+
+      - name: Commit and push
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          git -c user.name="khanhtd36-bot" -c user.email="khanhtd36@gmail.com" \
+            commit -am "Update herdr-khanhtd36 to ${VERSION}"
+          git push
