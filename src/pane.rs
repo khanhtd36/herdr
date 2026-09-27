@@ -3346,6 +3346,18 @@ impl PaneRuntime {
         drop(guard);
         self.compression.wake();
         mark_detection_content_changed(&self.detection_content_seq);
+        // Herdr's clear only trims the local viewport/scrollback and by
+        // upstream design never touches the child process. That leaves
+        // multi-line shell prompts (e.g. starship) partially erased, since
+        // the shell has no signal to reprint them. This fork intentionally
+        // sends a form feed, the conventional "redraw screen" byte that
+        // zle/readline bind to clear-screen (Ctrl+L), so the shell
+        // reprints its full prompt -- matching native terminal clear
+        // behavior at the cost of upstream's "never write to the child"
+        // guarantee for this action.
+        if let Err(err) = self.try_send_bytes(Bytes::from_static(b"\x0c")) {
+            debug!(err = %err, "failed to nudge child redraw after clear_screen");
+        }
         result
     }
 
@@ -4015,7 +4027,18 @@ mod tests {
         assert!(!text.contains("old"), "{text:?}");
         runtime.test_process_pty_bytes(b"5 q");
         assert!(!runtime.visible_text().contains("5 q"));
-        assert!(rx.try_recv().is_err(), "clear must not send child input");
+        // This fork intentionally writes a form feed to the child after
+        // clearing so the shell's own redraw widget (zle/readline
+        // clear-screen, bound to Ctrl+L / \x0c) reprints multi-line prompts
+        // (e.g. starship) that clearing the viewport alone would otherwise
+        // leave partially erased. Upstream herdr deliberately avoids writing
+        // to the child here; this fork trades that guarantee for correct
+        // multi-line prompt redraws.
+        assert_eq!(
+            rx.try_recv().ok().as_deref(),
+            Some(&b"\x0c"[..]),
+            "clear should nudge the child to redraw its prompt"
+        );
     }
 
     #[tokio::test]
