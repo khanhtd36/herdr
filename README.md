@@ -46,6 +46,14 @@ irm https://herdr.khanhtd36.dev/install.ps1 | iex
 winget install khanhtd36.herdr-khanhtd36
 ```
 
+```bash
+brew install khanhtd36/tap/herdr-khanhtd36
+```
+
+> the brew formula installs the binary as `herdr` (matching upstream's name), so it
+> conflicts with upstream's own `brew install herdr` (homebrew-core) — don't install
+> both at once.
+
 or grab a binary from [releases](https://github.com/khanhtd36/herdr/releases). the binary is still named `herdr`.
 
 > if you installed an older fork build before this fork switched off `herdr.dev`
