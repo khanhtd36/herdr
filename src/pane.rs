@@ -362,6 +362,35 @@ async fn apply_agent_detection_publish_update(
 }
 
 const AGENT_MISS_CONFIRMATION_ATTEMPTS: u8 = 6;
+const SELF_REPORTED_AGENT_SHELL_RECHECK: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Herdr cannot identify a self-reported agent's process, so the pane's shell
+/// returning to an idle prompt is the only sign that the agent exited.
+async fn report_self_reported_agent_shell_return(
+    active: &AtomicBool,
+    pid: u32,
+    now: std::time::Instant,
+    last_check: &mut Option<std::time::Instant>,
+    state_events: &mpsc::Sender<AppEvent>,
+    pane_id: PaneId,
+) {
+    if pid == 0 || !active.load(Ordering::Acquire) {
+        *last_check = None;
+        return;
+    }
+    if last_check.is_some_and(|last| now.duration_since(last) < SELF_REPORTED_AGENT_SHELL_RECHECK) {
+        return;
+    }
+    *last_check = Some(now);
+    if crate::detect::pane_shell_is_idle(pid) {
+        let _ = state_events
+            .send(AppEvent::ReportedAgentShellReturned {
+                pane_id,
+                observed_at: now,
+            })
+            .await;
+    }
+}
 const PROCESS_RECHECK_IDENTIFIED: std::time::Duration = std::time::Duration::from_secs(5);
 const PROCESS_RECHECK_MISSING_FOREGROUND_GROUP: std::time::Duration =
     std::time::Duration::from_secs(30);
@@ -765,6 +794,7 @@ fn spawn_basic_detection_task(
     terminal: Arc<PaneTerminal>,
     detection_content_seq: Arc<AtomicU64>,
     full_lifecycle_authority_active: Arc<AtomicBool>,
+    self_reported_agent_active: Arc<AtomicBool>,
     state_events: mpsc::Sender<AppEvent>,
 ) -> (
     tokio::task::AbortHandle,
@@ -797,6 +827,7 @@ fn spawn_basic_detection_task(
         let mut pending_idle = PendingIdleConfirmation::default();
         let mut was_detect_enabled = true;
         let mut last_codex_prompt_ready = false;
+        let mut last_self_reported_shell_check = None;
 
         loop {
             let sleep_duration = if pending_idle.active() {
@@ -882,6 +913,15 @@ fn spawn_basic_detection_task(
             let mut agent = agent_presence.current_agent();
             let lifecycle_authority_active =
                 full_lifecycle_authority_active.load(Ordering::Acquire);
+            report_self_reported_agent_shell_return(
+                &self_reported_agent_active,
+                pid,
+                now,
+                &mut last_self_reported_shell_check,
+                &state_events,
+                pane_id,
+            )
+            .await;
             let foreground_pgid = (pid > 0)
                 .then(|| crate::detect::foreground_process_group_id(pid))
                 .flatten();
@@ -1365,6 +1405,7 @@ pub struct PaneRuntime {
     content_write_lock: Arc<Mutex<()>>,
     detection_content_seq: Arc<AtomicU64>,
     full_lifecycle_authority_active: Arc<AtomicBool>,
+    self_reported_agent_active: Arc<AtomicBool>,
     detect_reset_notify: Arc<Notify>,
     pending_release: Arc<Mutex<Option<PendingAgentRelease>>>,
     preserve_processes_on_drop: bool,
@@ -2588,12 +2629,14 @@ impl PaneRuntime {
         };
 
         let full_lifecycle_authority_active = Arc::new(AtomicBool::new(false));
+        let self_reported_agent_active = Arc::new(AtomicBool::new(false));
         let (detect_handle, detect_reset_notify, pending_release) = spawn_basic_detection_task(
             pane_id,
             child_pid.clone(),
             terminal.clone(),
             detection_content_seq.clone(),
             full_lifecycle_authority_active.clone(),
+            self_reported_agent_active.clone(),
             events,
         );
 
@@ -2612,6 +2655,7 @@ impl PaneRuntime {
             content_write_lock,
             detection_content_seq,
             full_lifecycle_authority_active,
+            self_reported_agent_active,
             detect_reset_notify,
             pending_release,
             preserve_processes_on_drop: true,
@@ -2671,6 +2715,7 @@ impl PaneRuntime {
         let content_seq = Arc::new(AtomicU64::new(0));
         let detection_content_seq = Arc::new(AtomicU64::new(0));
         let full_lifecycle_authority_active = Arc::new(AtomicBool::new(false));
+        let self_reported_agent_active = Arc::new(AtomicBool::new(false));
         {
             let child_pid = child_pid.clone();
             let child_wait_completed = child_wait_completed.clone();
@@ -2794,6 +2839,7 @@ impl PaneRuntime {
             let state_events = events.clone();
             let detection_content_seq = detection_content_seq.clone();
             let full_lifecycle_authority_active_for_task = full_lifecycle_authority_active.clone();
+            let self_reported_agent_active_for_task = self_reported_agent_active.clone();
             let render_notify = render_notify.clone();
             let render_dirty = render_dirty.clone();
             let detect_reset_notify = Arc::new(Notify::new());
@@ -2826,6 +2872,7 @@ impl PaneRuntime {
                 let mut pending_idle = PendingIdleConfirmation::default();
                 let mut was_detect_enabled = true;
                 let mut last_codex_prompt_ready = false;
+                let mut last_self_reported_shell_check = None;
 
                 tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -2920,6 +2967,15 @@ impl PaneRuntime {
                     let mut agent = agent_presence.current_agent();
                     let lifecycle_authority_active =
                         full_lifecycle_authority_active_for_task.load(Ordering::Acquire);
+                    report_self_reported_agent_shell_return(
+                        &self_reported_agent_active_for_task,
+                        pid,
+                        now,
+                        &mut last_self_reported_shell_check,
+                        &state_events,
+                        pane_id,
+                    )
+                    .await;
                     let process_probe_input = ProcessProbeInput {
                         current_agent: agent,
                         suppressed_agent,
@@ -3240,6 +3296,7 @@ impl PaneRuntime {
             content_write_lock,
             detection_content_seq,
             full_lifecycle_authority_active,
+            self_reported_agent_active,
             detect_reset_notify,
             pending_release,
             preserve_processes_on_drop: false,
@@ -3265,6 +3322,11 @@ impl PaneRuntime {
     #[cfg(test)]
     pub(crate) fn agent_detection_reset_notify_for_test(&self) -> Arc<Notify> {
         self.detect_reset_notify.clone()
+    }
+
+    pub fn set_self_reported_agent_active(&self, active: bool) {
+        self.self_reported_agent_active
+            .store(active, Ordering::Release);
     }
 
     pub fn set_full_lifecycle_authority_active(&self, active: bool) {
@@ -3613,6 +3675,10 @@ impl PaneRuntime {
     {
         self.terminal
             .kitty_image_placements_with_data_filter(needs_data)
+    }
+
+    pub(crate) fn kitty_image_fingerprints(&self, image_ids: &[u32]) -> Vec<Option<u64>> {
+        self.terminal.kitty_image_fingerprints(image_ids)
     }
 
     pub fn keyboard_protocol(&self) -> crate::input::KeyboardProtocol {
@@ -3987,6 +4053,7 @@ impl PaneRuntime {
                 content_write_lock: Arc::new(Mutex::new(())),
                 detection_content_seq: Arc::new(AtomicU64::new(0)),
                 full_lifecycle_authority_active: Arc::new(AtomicBool::new(false)),
+                self_reported_agent_active: Arc::new(AtomicBool::new(false)),
                 detect_reset_notify: Arc::new(Notify::new()),
                 pending_release: Arc::new(Mutex::new(None)),
                 preserve_processes_on_drop: true,
@@ -5149,6 +5216,7 @@ mod tests {
         ));
         let compression = TerminalCompressionTask::spawn(pane_id, terminal.clone());
         let runtime = PaneRuntime {
+            self_reported_agent_active: Arc::new(AtomicBool::new(false)),
             cwd_process_exited: Arc::new(AtomicBool::new(false)),
             persistence_cwd: Mutex::new(None),
             pane_id,
@@ -5188,6 +5256,7 @@ mod tests {
         ));
         let compression = TerminalCompressionTask::spawn(pane_id, terminal.clone());
         let runtime = PaneRuntime {
+            self_reported_agent_active: Arc::new(AtomicBool::new(false)),
             cwd_process_exited: Arc::new(AtomicBool::new(false)),
             persistence_cwd: Mutex::new(None),
             pane_id,
