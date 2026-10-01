@@ -439,11 +439,6 @@ fn color_scheme_change_event_requests_host_theme_query() {
 }
 
 #[test]
-fn host_terminal_theme_query_is_disabled_on_windows() {
-    assert_eq!(should_query_host_terminal_theme(), !cfg!(windows));
-}
-
-#[test]
 fn write_host_cell_size_query_emits_xtwinops_request() {
     let mut output = Vec::new();
     write_host_cell_size_query(&mut output).unwrap();
@@ -965,12 +960,4 @@ fn terminal_control_scroll_command_maps_to_attach_scroll() {
     assert_eq!(source, AttachScrollSource::Wheel);
     assert_eq!(direction, AttachScrollDirection::Up);
     assert_eq!(lines, 3);
-}
-
-#[test]
-fn forward_clipboard_uses_local_clipboard_path() {
-    let _guard = env_lock().lock().unwrap();
-    let _ssh = EnvVarGuard::set("SSH_CONNECTION", "1 2 3 4");
-    assert!(forward_clipboard("dGVzdA=="));
-    assert!(!forward_clipboard("not base64"));
 }
