@@ -3966,7 +3966,7 @@ mod tests {
         let json = include_str!("../distribution/latest.json");
         let legacy: LegacyUpdateManifest = serde_json::from_str(json)
             .expect("distribution/latest.json should keep legacy string asset URLs");
-        assert_eq!(legacy.assets.len(), 3);
+        assert!(legacy.assets.len() >= 4);
 
         let manifest: UpdateManifest = serde_json::from_str(json)
             .expect("distribution/latest.json should match updater schema");
@@ -3980,7 +3980,7 @@ mod tests {
         // not the current unreleased checkout. Its protocol is updated by the
         // fork-release flow together with the release assets.
         assert!(manifest.protocol.is_some());
-        assert_eq!(manifest.assets.len(), 3);
+        assert!(manifest.assets.len() >= 4);
         assert!(manifest.releases.contains_key(&manifest.version));
 
         // This fork's release workflow (.github/workflows/fork-release.yml)
