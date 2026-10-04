@@ -1,34 +1,34 @@
 {
-  "version": "0.9.3-khanhtd36.1",
+  "version": "0.9.3-khanhtd36.2",
   "protocol": 20,
-  "notes": "See https://github.com/khanhtd36/herdr/releases/tag/fork-v0.9.3-khanhtd36.1 for release notes.",
+  "notes": "See https://github.com/khanhtd36/herdr/releases/tag/fork-v0.9.3-khanhtd36.2 for release notes.",
   "assets": {
-    "linux-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.1/herdr-linux-x86_64",
-    "macos-aarch64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.1/herdr-macos-aarch64",
-    "macos-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.1/herdr-macos-x86_64",
-    "windows-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.1/herdr-windows-x86_64.exe"
+    "linux-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.2/herdr-linux-x86_64",
+    "macos-aarch64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.2/herdr-macos-aarch64",
+    "macos-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.2/herdr-macos-x86_64",
+    "windows-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.2/herdr-windows-x86_64.exe"
   },
   "sha256": {
-    "linux-x86_64": "b2a3aabf61a8e40b130dc70ffb2a49bdc6b72851fbbb785d33389810d0711057",
-    "macos-aarch64": "a77e478e18139158cd32c44e69eacc7dfb9bc338bbad007f928e14de031b8e91",
-    "macos-x86_64": "4799fdb0a189e17828d9eecb208586980d80c274a0bef74098a8eff90e49ca51",
-    "windows-x86_64": "047c3a3c6a40eb399a54654a9ceba8bb09fbe523eca6b566d6d52c214232d2f3"
+    "linux-x86_64": "6d0eb44119876941d0e8bc496c80ece050561d6e8b3c21a2354fa32c948b0248",
+    "macos-aarch64": "336ad5c290e8cf1791029a04ff9a8f550afe7f1e18bdbf32e545ece9bcca0925",
+    "macos-x86_64": "91adadbc5781111d0601996e41b95f683381b39ee7eda384f8dbab296a3815e5",
+    "windows-x86_64": "6fc04cf9d595461b9245adcea8b301147c532fd328f15c3e2908e5c24a12416e"
   },
   "releases": {
-    "0.9.3-khanhtd36.1": {
-      "notes": "See https://github.com/khanhtd36/herdr/releases/tag/fork-v0.9.3-khanhtd36.1 for release notes.",
+    "0.9.3-khanhtd36.2": {
+      "notes": "See https://github.com/khanhtd36/herdr/releases/tag/fork-v0.9.3-khanhtd36.2 for release notes.",
       "protocol": 20,
       "assets": {
-        "linux-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.1/herdr-linux-x86_64",
-        "macos-aarch64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.1/herdr-macos-aarch64",
-        "macos-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.1/herdr-macos-x86_64",
-        "windows-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.1/herdr-windows-x86_64.exe"
+        "linux-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.2/herdr-linux-x86_64",
+        "macos-aarch64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.2/herdr-macos-aarch64",
+        "macos-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.2/herdr-macos-x86_64",
+        "windows-x86_64": "https://github.com/khanhtd36/herdr/releases/download/fork-v0.9.3-khanhtd36.2/herdr-windows-x86_64.exe"
       },
       "sha256": {
-        "linux-x86_64": "b2a3aabf61a8e40b130dc70ffb2a49bdc6b72851fbbb785d33389810d0711057",
-        "macos-aarch64": "a77e478e18139158cd32c44e69eacc7dfb9bc338bbad007f928e14de031b8e91",
-        "macos-x86_64": "4799fdb0a189e17828d9eecb208586980d80c274a0bef74098a8eff90e49ca51",
-        "windows-x86_64": "047c3a3c6a40eb399a54654a9ceba8bb09fbe523eca6b566d6d52c214232d2f3"
+        "linux-x86_64": "6d0eb44119876941d0e8bc496c80ece050561d6e8b3c21a2354fa32c948b0248",
+        "macos-aarch64": "336ad5c290e8cf1791029a04ff9a8f550afe7f1e18bdbf32e545ece9bcca0925",
+        "macos-x86_64": "91adadbc5781111d0601996e41b95f683381b39ee7eda384f8dbab296a3815e5",
+        "windows-x86_64": "6fc04cf9d595461b9245adcea8b301147c532fd328f15c3e2908e5c24a12416e"
       }
     }
   }
