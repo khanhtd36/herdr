@@ -21,6 +21,12 @@ pub(crate) use notifications::{
     show_actionable_desktop_notification, show_desktop_notification,
 };
 
+static ALLOW_UNELEVATED_CLIENTS: OnceLock<bool> = OnceLock::new();
+
+pub(crate) fn allow_unelevated_clients() {
+    let _ = ALLOW_UNELEVATED_CLIENTS.set(true);
+}
+
 pub(crate) fn probe_local_server(path: &std::path::Path) -> std::io::Result<()> {
     use interprocess::os::windows::named_pipe::{pipe_mode::Bytes, DuplexPipeStream};
     use interprocess::ConnectWaitMode;
@@ -38,11 +44,44 @@ pub(crate) fn probe_local_server(path: &std::path::Path) -> std::io::Result<()> 
 
 pub(crate) fn local_server_security_descriptor(
 ) -> std::io::Result<interprocess::os::windows::security_descriptor::SecurityDescriptor> {
-    user_security_descriptor("GRGW")
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    let mut token = null_mut();
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let token = unsafe { OwnedHandle::from_raw_handle(token) };
+    let mut elevation = TOKEN_ELEVATION::default();
+    let mut needed = 0;
+    if unsafe {
+        GetTokenInformation(
+            token.as_raw_handle(),
+            TokenElevation,
+            (&mut elevation as *mut TOKEN_ELEVATION).cast(),
+            size_of::<TOKEN_ELEVATION>() as u32,
+            &mut needed,
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    let allow_unelevated = ALLOW_UNELEVATED_CLIENTS.get().copied().unwrap_or(false);
+    let integrity = if elevation.TokenIsElevated != 0 && !allow_unelevated {
+        "HI"
+    } else {
+        "ME"
+    };
+    // The account DACL alone cannot distinguish ordinary and elevated clients.
+    // The integrity label blocks both reading and writing from lower levels.
+    user_security_descriptor("GRGW", &format!("S:(ML;;NRNW;;;{integrity})"))
 }
 
 fn user_security_descriptor(
     access: &str,
+    integrity_label: &str,
 ) -> std::io::Result<interprocess::os::windows::security_descriptor::SecurityDescriptor> {
     use interprocess::os::windows::security_descriptor::SecurityDescriptor;
     use widestring::{U16CStr, U16CString};
@@ -84,10 +123,11 @@ fn user_security_descriptor(
     }
     let sid_text = unsafe { U16CStr::from_ptr_str(sid) }.to_string_lossy();
     unsafe { LocalFree(sid.cast()) };
-    // The elevated token's default owner can be Administrators. Authorize the
-    // account instead: its ordinary clients deliberately control elevated panes.
-    let sddl = U16CString::from_str(format!("D:P(A;;GA;;;SY)(A;;{access};;;{sid_text})"))
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+    // Use the account SID rather than the elevated token's Administrators owner.
+    let sddl = U16CString::from_str(format!(
+        "D:P(A;;GA;;;SY)(A;;{access};;;{sid_text}){integrity_label}"
+    ))
+    .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
     SecurityDescriptor::deserialize(&sddl)
 }
 
@@ -98,8 +138,9 @@ pub(crate) fn local_server_connection_error(error: std::io::Error) -> std::io::E
     std::io::Error::new(
         error.kind(),
         format!(
-            "For an older elevated server, stop it in an admin shell and \
-             reopen Herdr (closes panes). {error}"
+            "For an elevated server, use an administrator terminal. Sharing with ordinary \
+             clients requires stopping it there and restarting its `herdr server` command \
+             with --allow-unelevated-clients (closes panes). {error}"
         ),
     )
 }
@@ -273,7 +314,7 @@ pub(crate) fn create_config_temporary(
             FILE_SHARE_WRITE,
         },
     };
-    let descriptor = user_security_descriptor("GA")?;
+    let descriptor = user_security_descriptor("GA", "")?;
     let mut attributes = SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
         lpSecurityDescriptor: null_mut(),
@@ -1587,7 +1628,7 @@ fn select_pane_foreground_job_from_snapshot_with_runtime_inspection(
         }
     }
 
-    if let Some(selected) = select_topmost_chain_candidate(&candidates, snapshot) {
+    if let Some(selected) = select_topmost_agent_chain_candidate(&candidates, snapshot) {
         return Some(foreground_job_from_entry(selected));
     }
     if !candidates.is_empty() {
@@ -1600,18 +1641,20 @@ fn select_pane_foreground_job_from_snapshot_with_runtime_inspection(
         // sharing this shell's marker before falling back further.
         let escaped_agent_indices = snapshot.agent_indices();
         if !escaped_agent_indices.is_empty() {
-            if let Some(shell_runtime_marker) =
-                runtime_marker(shell).filter(|marker| !marker.is_empty())
-            {
+            if let Some(shell_runtime_marker) = pane_runtime_marker(shell, &mut runtime_marker) {
                 let matching_candidates: Vec<_> = escaped_agent_indices
                     .iter()
                     .map(|&index| &entries[index])
                     .filter(|entry| {
-                        runtime_marker(entry).as_deref() == Some(shell_runtime_marker.as_str())
+                        carries_pane_runtime_marker(
+                            entry,
+                            &shell_runtime_marker,
+                            &mut runtime_marker,
+                        )
                     })
                     .collect();
                 if let Some(selected) =
-                    select_topmost_chain_candidate(&matching_candidates, snapshot)
+                    select_topmost_agent_chain_candidate(&matching_candidates, snapshot)
                 {
                     return Some(foreground_job_from_entry(selected));
                 }
@@ -1639,7 +1682,7 @@ fn select_topmost_live_descendant<'a>(
     descendants: &[&'a WindowsProcessEntry],
     snapshot: &ProcessSnapshot,
 ) -> Option<&'a WindowsProcessEntry> {
-    // select_topmost_chain_candidate only requires a common ancestor, not a
+    // select_topmost_agent_chain_candidate only requires a common ancestor, not a
     // single linear chain: for `shell -> cmd -> {watcher, lazygit}`, `cmd` is
     // an ancestor of both branches and would be wrongly selected over the
     // actual independent leaves. Only trust it when every descendant pair is
@@ -1653,7 +1696,7 @@ fn select_topmost_live_descendant<'a>(
         })
     });
     if is_linear_chain {
-        if let Some(chain) = select_topmost_chain_candidate(descendants, snapshot) {
+        if let Some(chain) = select_topmost_agent_chain_candidate(descendants, snapshot) {
             return Some(chain);
         }
     }
@@ -1674,6 +1717,69 @@ fn select_pane_foreground_job(
     )
 }
 
+/// Git Bash can start agents outside the pane shell's process tree. Those
+/// belong to the pane when they carry the runtime marker the shell got.
+fn pane_runtime_marker(
+    shell: &WindowsProcessEntry,
+    runtime_marker: &mut impl FnMut(&WindowsProcessEntry) -> Option<String>,
+) -> Option<String> {
+    runtime_marker(shell).filter(|marker| !marker.is_empty())
+}
+
+fn carries_pane_runtime_marker(
+    entry: &WindowsProcessEntry,
+    pane_marker: &str,
+    runtime_marker: &mut impl FnMut(&WindowsProcessEntry) -> Option<String>,
+) -> bool {
+    runtime_marker(entry).as_deref() == Some(pane_marker)
+}
+
+/// Whether foreground selection could pick `pid` for this pane: a descendant
+/// of the pane shell, or an escaped Git Bash agent with the pane's marker.
+fn process_belongs_to_pane(
+    shell_pid: u32,
+    pid: u32,
+    snapshot: &ProcessSnapshot,
+    shell_is_git_bash: impl FnOnce(&WindowsProcessEntry) -> bool,
+    mut runtime_marker: impl FnMut(&WindowsProcessEntry) -> Option<String>,
+) -> bool {
+    if process_is_ancestor(shell_pid, pid, snapshot) {
+        return true;
+    }
+    let (Some(shell), Some(entry)) = (snapshot.entry(shell_pid), snapshot.entry(pid)) else {
+        return false;
+    };
+    shell_is_git_bash(shell)
+        && process_entry_identifies_agent(entry)
+        && pane_runtime_marker(shell, &mut runtime_marker).is_some_and(|pane_marker| {
+            carries_pane_runtime_marker(entry, &pane_marker, &mut runtime_marker)
+        })
+}
+
+/// Creation time of `pid`. It tells a process apart from a later one that
+/// reuses its pid.
+pub fn process_start_token(pid: u32) -> Option<u64> {
+    ProcessIdentity::open(pid)?.creation_time()
+}
+
+/// Returns `pid` while that same process, matched by its creation time, is
+/// still running for the pane shell `shell_pid`. Windows has no job control,
+/// so the process stands in for its own group.
+pub fn live_pane_process_group(shell_pid: u32, pid: u32, start_token: u64) -> Option<u32> {
+    let identity = ProcessIdentity::open(pid)?;
+    if !identity.running() || identity.creation_time() != Some(start_token) {
+        return None;
+    }
+    process_belongs_to_pane(
+        shell_pid,
+        pid,
+        &cached_foreground_processes(),
+        |shell| process_is_git_bash(shell.pid),
+        |entry| process_runtime_marker(entry.pid),
+    )
+    .then_some(pid)
+}
+
 fn process_entry_identifies_agent(entry: &WindowsProcessEntry) -> bool {
     crate::detect::identify_agent(&entry.name).is_some()
         || crate::detect::identify_agent_in_job(&foreground_job_from_entry(entry)).is_some()
@@ -1686,7 +1792,7 @@ fn foreground_job_from_entry(entry: &WindowsProcessEntry) -> ForegroundJob {
     }
 }
 
-fn select_topmost_chain_candidate<'a>(
+fn select_topmost_agent_chain_candidate<'a>(
     candidates: &[&'a WindowsProcessEntry],
     snapshot: &ProcessSnapshot,
 ) -> Option<&'a WindowsProcessEntry> {
@@ -4269,6 +4375,50 @@ mod tests {
 
         assert_eq!(job.process_group_id, 10);
         assert_eq!(job.processes[0].name, "bash.exe");
+    }
+
+    #[test]
+    fn windows_held_agent_must_still_belong_to_the_pane() {
+        let entries = vec![
+            test_entry(10, 1, "bash.exe", &[r"C:\Program Files\Git\bin\bash.exe"]),
+            test_entry(11, 10, "claude.exe", &["claude.exe"]),
+            test_entry(20, 99, "codex.exe", &["codex.exe"]),
+            test_entry(30, 98, "vim.exe", &["vim.exe"]),
+            test_entry(50, 77, "claude.exe", &["claude.exe"]),
+        ];
+        let snapshot = super::ProcessSnapshot::new(entries);
+        let marker = |pane: &'static str| {
+            move |entry: &super::WindowsProcessEntry| {
+                Some(if entry.pid == 10 { "pane-a" } else { pane }.to_string())
+            }
+        };
+        let belongs = |pid, git_bash, pane| {
+            super::process_belongs_to_pane(10, pid, &snapshot, |_| git_bash, marker(pane))
+        };
+
+        assert!(belongs(11, false, "pane-b"), "descendant of the shell");
+        assert!(
+            belongs(20, true, "pane-a"),
+            "escaped agent with the pane marker"
+        );
+        assert!(!belongs(20, true, "pane-b"), "marker from another pane");
+        assert!(
+            !belongs(20, false, "pane-a"),
+            "escape only applies to Git Bash"
+        );
+        assert!(!belongs(30, true, "pane-a"), "escaped non-agent process");
+        assert!(
+            !belongs(40, true, "pane-a"),
+            "process gone from the snapshot"
+        );
+        assert!(
+            !belongs(50, false, "pane-a"),
+            "agent whose parent chain no longer reaches the shell"
+        );
+        assert!(
+            !super::process_belongs_to_pane(60, 11, &snapshot, |_| true, marker("pane-a")),
+            "pane shell gone"
+        );
     }
 
     #[test]
