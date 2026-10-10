@@ -2829,10 +2829,6 @@ fn ghostty_visible_ansi(core: &GhosttyPaneCore) -> Result<String, crate::ghostty
     )
 }
 
-fn ghostty_detection_text(core: &mut GhosttyPaneCore) -> Result<String, crate::ghostty::Error> {
-    ghostty_detection_text_for_cache(core).map(|(text, _)| text)
-}
-
 fn ghostty_detection_text_for_cache(
     core: &mut GhosttyPaneCore,
 ) -> Result<(String, bool), crate::ghostty::Error> {
