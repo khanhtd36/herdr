@@ -77,7 +77,7 @@ run your agents, split panes, walk away. `ctrl+b q` detaches, `herdr` reattaches
 Beyond the install URL and branding, this fork makes a few deliberate behavioral choices that differ from [herdrdev/herdr](https://github.com/herdrdev/herdr):
 
 - **own update channel** — `herdr update` on this fork checks `herdr.khanhtd36.dev`, not `herdr.dev` (see the note above if you're on an older build).
-- **`ctrl+k` reprints multi-line prompts** — clearing a pane also sends the shell a redraw signal (equivalent to pressing `ctrl+l`), so multi-line prompts (e.g. starship) reprint in full instead of leaving only their last line after a clear. Upstream deliberately never writes to the child process when clearing a pane; this fork trades that guarantee for correct redraws.
+- **`ctrl+k` reprints multi-line prompts** — `clear_screen` is bound to `ctrl+k` by default (set `clear_screen = ""` under `[keys]` to unbind). Clearing a pane also sends the shell a redraw signal (equivalent to pressing `ctrl+l`), so multi-line prompts (e.g. starship) reprint in full instead of leaving only their last line after a clear. Upstream deliberately never writes to the child process when clearing a pane; this fork trades that guarantee for correct redraws.
 - **stable scrollbar gutter across alt-screen transitions** — the scrollbar gutter column no longer resizes the pane every time a program enters or exits the alternate screen (vim, less, a pager, ...), which used to occasionally clip a right-aligned prompt segment onto a second line right after the shell redrew.
 
 This list covers behavior you'd notice while using herdr day to day; repository/process-only differences (CI workflows, contributor gating, README branding) aren't included here.

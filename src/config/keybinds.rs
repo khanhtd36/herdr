@@ -2488,9 +2488,29 @@ previous_workspace = "prefix+shift+l"
     }
 
     #[test]
-    fn clear_screen_is_unbound_by_default() {
+    fn clear_screen_defaults_to_bare_ctrl_k() {
         let kb = Keybinds::default();
-        assert!(kb.clear_screen.bindings.is_empty());
+        assert_eq!(
+            binding_triggers(&kb.clear_screen),
+            vec![BindingTrigger::Direct((
+                KeyCode::Char('k'),
+                KeyModifiers::CONTROL
+            ))]
+        );
+    }
+
+    #[test]
+    fn clear_screen_can_be_unbound_with_empty_value() {
+        for value in [r#""""#, "[]"] {
+            let config: Config =
+                toml::from_str(&format!("[keys]\nclear_screen = {value}\n")).unwrap();
+
+            assert!(config.collect_diagnostics().is_empty());
+            assert!(
+                config.keybinds().clear_screen.bindings.is_empty(),
+                "clear_screen = {value} should unbind"
+            );
+        }
     }
 
     #[test]

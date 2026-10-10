@@ -652,7 +652,8 @@ fn print_report(report: &Report) {
 // Remaining: Alt+], Alt+Shift+P/X, Alt+^, Alt+_ behind legacy hosts. Their bytes
 // also start host replies, so they are never forwarded and the reply-tail
 // discard can swallow the next keystroke (#344).
-const KEYBOARD_FAILURES_BASELINE: usize = 60;
+// Fork: +20 for bare Ctrl+K, which the fork binds to clear_screen by default.
+const KEYBOARD_FAILURES_BASELINE: usize = 80;
 const MOUSE_FAILURES_BASELINE: usize = 96;
 // Remaining: legacy hosts split right after ESC[, which is also Alt+[.
 const SPLIT_IDLE_MISMATCH_BASELINE: usize = 207;

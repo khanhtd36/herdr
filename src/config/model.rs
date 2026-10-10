@@ -507,7 +507,7 @@ pub struct KeysConfig {
     /// Close the focused pane. Default: "prefix+x"
     pub close_pane: BindingConfig,
     /// Clear the focused pane's screen and scrollback (cursor, colors, and
-    /// any running alternate-screen program are untouched). Unset by default.
+    /// any running alternate-screen program are untouched). Default: "ctrl+k"; set to "" to unbind.
     pub clear_screen: BindingConfig,
     /// Toggle zoom for the focused pane. Default: "prefix+z"
     #[serde(alias = "fullscreen")]
@@ -1261,7 +1261,7 @@ impl Default for KeysConfig {
             split_vertical: BindingConfig::one("prefix+v"),
             split_horizontal: BindingConfig::one("prefix+minus"),
             close_pane: BindingConfig::one("prefix+x"),
-            clear_screen: BindingConfig::empty(),
+            clear_screen: BindingConfig::one("ctrl+k"),
             zoom: BindingConfig::one("prefix+z"),
             resize_mode: BindingConfig::one("prefix+r"),
             resize_pane_left: BindingConfig::empty(),
