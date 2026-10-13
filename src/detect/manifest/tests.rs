@@ -158,6 +158,51 @@ line_regex = ["^exact line$"]
 }
 
 #[test]
+fn paired_alternatives_require_complete_gates_at_bottom_buffer() {
+    with_manifest_dirs("paired-alternatives", || {
+        write_local_codex(&rules_manifest(
+            r#"
+[[rules]]
+id = "paired"
+state = "blocked"
+region = "bottom_non_empty_lines(3)"
+visible_blocker = true
+any = [
+  { all = [
+    { contains = ["alpha heading"] },
+    { regex = ['alpha\s+control\s*\z'] },
+  ] },
+  { all = [
+    { contains = ["beta heading"] },
+    { regex = ['beta\s+control\s*\z'] },
+  ] },
+]
+"#,
+        ));
+        for text in [
+            "alpha heading\nalpha control",
+            "beta heading\nbeta\ncontrol",
+        ] {
+            let result = explain(Agent::Codex, text);
+            assert_eq!(result.state, AgentState::Blocked);
+            assert!(result.visible_blocker);
+        }
+        for text in [
+            "alpha heading\nbeta control",
+            "beta heading\nalpha control",
+            "beta control",
+            "beta heading",
+            "beta heading\nbeta control\nnewer content",
+            "beta heading\nfiller one\nfiller two\nbeta control",
+        ] {
+            let result = explain(Agent::Codex, text);
+            assert!(result.matched_rule.is_none(), "{text}");
+            assert!(!result.visible_blocker, "{text}");
+        }
+    });
+}
+
+#[test]
 fn remote_manifest_loads_between_local_override_and_bundled() {
     with_manifest_dirs("remote-source", || {
         write_remote_codex(&remote_manifest("9999.01.01.1", "blocked", "remote-ready"));
