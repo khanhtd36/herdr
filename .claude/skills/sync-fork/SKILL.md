@@ -13,17 +13,19 @@ Do not use `just release` / `release-prepare` / `release-publish` here -- those 
 
 1. **Preflight.** Confirm the working tree is on `master` and clean (`git status --porcelain` empty). If either check fails, stop and report why -- don't stash, switch branches, or discard anything automatically.
 
-2. **Fetch.** `git fetch upstream master` -- not `--all`. This fork only ever merges upstream's `master`; upstream's feature branches and tags aren't relevant here and just add noise.
+2. **Sync with origin.** `GH_CONFIG_DIR="$HOME/.config/gh-khanhtd36" git pull --ff-only origin master`. Done when `git merge-base --is-ancestor origin/master master` succeeds. Syncs and releases also happen from other machines, so a stale local `master` means merging and verifying against old code, then a rejected push and a full redo. Local commits ahead of `origin` (an earlier run stopped before push) are fine. If the pull isn't a fast-forward (both sides have new commits), stop and list each side's commits -- don't rebase or reset automatically.
 
-3. **Check for anything to do.** If `master` already contains `upstream/master` (`git merge-base --is-ancestor upstream/master master`), report that the fork is already up to date and stop.
+3. **Fetch upstream.** `git fetch upstream master` -- not `--all`. This fork only ever merges upstream's `master`; upstream's feature branches and tags aren't relevant here and just add noise.
 
-4. **Merge.** `git merge upstream/master --no-edit`. Resolve any conflicts inline, using the precedent below. For anything without a clear match in that precedent, or requiring real semantic judgment (see the vendor-patch and behavioral-divergence cases below), stop and explain the tradeoff to the user rather than guessing -- don't silently pick a side.
+4. **Check for anything to do.** If `master` already contains `upstream/master` (`git merge-base --is-ancestor upstream/master master`), report that the fork is already up to date and stop.
+
+5. **Merge.** `git merge upstream/master --no-edit`. Resolve any conflicts inline, using the precedent below. For anything without a clear match in that precedent, or requiring real semantic judgment (see the vendor-patch and behavioral-divergence cases below), stop and explain the tradeoff to the user rather than guessing -- don't silently pick a side.
 
    ### Conflict-resolution precedent
 
    See the README's [`## how this fork differs from upstream`](../../../README.md) section for the full list of deliberate behavioral divergences and the user-facing rationale for each. The entries below add merge-conflict mechanics only (file paths, commit precedent, patch bookkeeping) -- don't duplicate the "why" here; update the README if a new divergence needs recording.
 
-   - **`Cargo.toml` / `Cargo.lock` version**: upstream always touches its own version line, so this conflicts on every sync. Resolve to `X.Y.Z-khanhtd36.N`: reset `N` to `1` if upstream's `X.Y.Z` changed from the fork's current base version, otherwise keep the fork's current `N` unchanged. This mirrors prior sync commits (`bfab881a`, `81eb0178`, and the `bccf28ea` merge from 2026-09-13). This is a merge-time resolution, not a release action -- it doesn't tag or publish anything.
+   - **`Cargo.toml` / `Cargo.lock` version**: upstream always touches its own version line, so this conflicts on every sync. Resolve to `X.Y.Z-khanhtd36.N`: reset `N` to `1` if upstream's `X.Y.Z` changed from the fork's current base version, otherwise keep the current `N` from `origin/master` (pulled in step 2) unchanged. This mirrors prior sync commits (`bfab881a`, `81eb0178`, and the `bccf28ea` merge from 2026-09-13). This is a merge-time resolution, not a release action -- it doesn't tag or publish anything.
    - **`distribution/latest.json`**: fork-owned, never synced from upstream. Always keep the fork's own side (`git checkout --ours`) -- this file is only ever updated by `fork-release`.
    - **Deleted upstream-only CI/contributor-gating files** (e.g. `.github/workflows/pr-gate.yml`, `nix.yml`, `website.yml`, `build-artifacts-manual.yml`, `label-next-release-issues.yml`, `.github/ISSUE_TEMPLATE/`, `.github/MAINTAINERS`, `.github/APPROVED_CONTRIBUTORS`): this fork deliberately stripped these (commit `2a39fc43`, "not needed for a solo fork"). If upstream modifies one of these and Git reports a modify/delete conflict, keep it deleted (`git rm`).
    - **README.md**: keep the fork's own install/branding section (custom domain, winget, upgrade note); don't pull in upstream's install-URL/sponsor/language-switcher content. Non-install-section prose changes from upstream can still be taken.
@@ -31,9 +33,9 @@ Do not use `just release` / `release-prepare` / `release-publish` here -- those 
    - **`clear_screen` writes a form feed to the child** (`src/pane.rs`, `PaneRuntime::clear_screen`): this fork intentionally sends `\x0c` to the child shell after clearing, so multi-line prompts (e.g. starship) reprint fully -- see README for rationale. Upstream's vendored patch (`vendor/patches/libghostty-vt/0006-clear-screen-preserving-cursor-line.patch`) and its own doc comment say clearing should never write to the child; the fork's `clear_pane_preserves_wrapped_input_and_unfinished_vt_sequence` test was changed accordingly (it now asserts the form feed *is* sent, where upstream's version of this test would assert the opposite). If upstream's version of `clear_screen` or that test conflicts or merges clean, check that the `\x0c` write and the test's assertion direction both survived.
    - **Build tool version requirements** (Zig, Rust toolchain, etc.): if the vendor upgrade or upstream's own `build.rs`/`build.zig` bumps a minimum tool version, that's not just a merge conflict to resolve -- it can break `.github/workflows/fork-release.yml`, which pins its own tool versions independently. After the merge, grep the workflow for the old pinned version and check whether the new requirement means it also needs bumping (see the Gotchas section).
 
-5. **Watch for post-merge behavioral divergence, not just textual conflicts.** A clean, conflict-free merge can still silently reintroduce upstream behavior this fork deliberately changed, if the two sides' edits didn't textually overlap. This already happened once: this fork's scrollbar-gutter-stability fix (see README) merged clean while a later upstream refactor quietly reverted it, and two of upstream's own tests (written against the old behavior) still passed the merge but encoded the wrong expectation. There's no mechanical check for this -- it only surfaces via verification (next step) or by reading the diff on files where the fork carries a known intentional divergence (the README list, plus the `clear_screen` entry above). Treat any failing test after a clean merge as a signal to check exactly this, not just assume a flake.
+6. **Watch for post-merge behavioral divergence, not just textual conflicts.** A clean, conflict-free merge can still silently reintroduce upstream behavior this fork deliberately changed, if the two sides' edits didn't textually overlap. This already happened once: this fork's scrollbar-gutter-stability fix (see README) merged clean while a later upstream refactor quietly reverted it, and two of upstream's own tests (written against the old behavior) still passed the merge but encoded the wrong expectation. There's no mechanical check for this -- it only surfaces via verification (next step) or by reading the diff on files where the fork carries a known intentional divergence (the README list, plus the `clear_screen` entry above). Treat any failing test after a clean merge as a signal to check exactly this, not just assume a flake.
 
-6. **Verify.** Run, in order, stopping to report and get direction if anything fails:
+7. **Verify.** Run, in order, stopping to report and get direction if anything fails:
    ```
    cargo build --locked
    cargo nextest run --locked
@@ -47,17 +49,17 @@ Do not use `just release` / `release-prepare` / `release-publish` here -- those 
 
    **On any test failure**, before deciding it's unrelated: create a throwaway worktree of plain `upstream/master` (`git worktree add /tmp/<name> upstream/master`) and rerun the exact failing test(s) there.
    - Fails identically on plain `upstream/master` -> pre-existing flake or environment sensitivity (e.g. PTY timing under sandboxing); note it in the report and exclude it from the verification run, but don't hide that it was excluded.
-   - Passes on plain `upstream/master` but fails on the merged tree -> genuine regression from the merge. Diagnose why (textual merge artifact vs. the behavioral-divergence pattern in step 5) and fix it -- either by correcting the merge resolution, or, if the fork's own behavior is the intentionally-correct one and the failing test encodes upstream's old assumption, updating the test to match the fork's documented intent.
+   - Passes on plain `upstream/master` but fails on the merged tree -> genuine regression from the merge. Diagnose why (textual merge artifact vs. the behavioral-divergence pattern in step 6) and fix it -- either by correcting the merge resolution, or, if the fork's own behavior is the intentionally-correct one and the failing test encodes upstream's old assumption, updating the test to match the fork's documented intent.
 
    Remove the throwaway worktree when done (`git worktree remove <path>`).
 
-7. **Stop and report.** Produce a chat summary (not a file) with these sections:
+8. **Stop and report.** Produce a chat summary (not a file) with these sections:
    - **Changelog**: a curated summary of what upstream changed (grouped by theme -- new features, notable fixes, refactors -- not a raw `git log` dump), written the way a merge commit message would describe it.
    - **Conflicts**: each file that conflicted, one line on what was kept and why (citing the precedent above, or the specific judgment call made for anything novel).
-   - **Verification**: pass/fail per check run in step 6, and which tests (if any) were excluded as pre-existing flakes with the pristine-upstream evidence.
+   - **Verification**: pass/fail per check run in step 7, and which tests (if any) were excluded as pre-existing flakes with the pristine-upstream evidence.
    - **Push status**: `awaiting confirmation` -- state the new version, the commit the merge produced, and ask explicitly before pushing.
 
-8. **Push only after explicit confirmation.** `git push origin master`. Don't push as part of the same turn that presents the report.
+9. **Push only after explicit confirmation.** `git push origin master`. Don't push as part of the same turn that presents the report. If the push is rejected because `origin` moved during the work, stop and report -- don't force-push.
 
 ## What this does not do
 
