@@ -2108,5 +2108,6 @@ mod windows_records {
 
     // Ratchet (may only go down). Remaining: Ctrl+[ is forwarded as a plain
     // Escape record rather than its own key record.
-    const WINDOWS_RECORD_FAILURES_BASELINE: usize = 1;
+    // Fork: +2 for bare Ctrl+K (us, de), which the fork binds to clear_screen by default.
+    const WINDOWS_RECORD_FAILURES_BASELINE: usize = 3;
 }
