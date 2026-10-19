@@ -397,7 +397,13 @@ fn release_info_from_manifest(manifest: &UpdateManifest) -> Result<Option<Releas
     let latest = Version::parse(&manifest.version)
         .ok_or_else(|| format!("invalid version in update manifest: {}", manifest.version))?;
 
-    if !stable_channel_should_install(&latest, &current, crate::build_info::is_preview()) {
+    let installable =
+        stable_channel_should_install(&latest, &current, crate::build_info::is_preview())
+            || crate::fork_update::is_newer_fork_release(
+                &manifest.version,
+                crate::build_info::BASE_VERSION,
+            );
+    if !installable {
         return Ok(None); // up to date
     }
 
@@ -425,7 +431,7 @@ fn release_info_from_manifest(manifest: &UpdateManifest) -> Result<Option<Releas
         })?;
 
     Ok(Some(ReleaseInfo {
-        identity: latest.to_string(),
+        identity: manifest.version.trim_start_matches('v').to_string(),
         version: latest,
         channel: UpdateChannel::Stable,
         build_id: None,
@@ -1899,6 +1905,8 @@ pub(crate) fn update_install_command() -> &'static str {
         MISE_UPDATE_COMMAND
     } else if is_nix_managed_install() {
         NIX_UPDATE_COMMAND
+    } else if crate::fork_update::is_winget_managed_install() {
+        crate::fork_update::WINGET_UPDATE_COMMAND
     } else {
         HERDR_UPDATE_COMMAND
     }
@@ -1963,6 +1971,8 @@ pub(crate) fn package_manager_channel_update_guidance_for_current_install() -> O
         Some("Use `mise upgrade herdr` to update mise installs.")
     } else if is_nix_managed_install() {
         Some("Update through Nix to update Nix-managed Herdr installs.")
+    } else if crate::fork_update::is_winget_managed_install() {
+        Some("Use `winget upgrade khanhtd36.herdr-khanhtd36` to update winget installs.")
     } else {
         None
     }
@@ -2151,6 +2161,13 @@ pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
         return Err(
             "self-update is disabled for Nix installs; update with `nix profile upgrade` or update the flake input that provides Herdr".into(),
         );
+    }
+
+    if crate::fork_update::is_winget_managed_install() {
+        return Err(format!(
+            "self-update is disabled for winget installs; run `{}` (winget can lag a new release by a few days; set HERDR_INSTALL_DIR and reinstall with the script to leave winget)",
+            crate::fork_update::WINGET_UPDATE_COMMAND
+        ));
     }
 
     if running_inside_herdr() {
